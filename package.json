@@ -1,0 +1,19 @@
+{
+  "name": "claude-monitor",
+  "version": "0.1.0",
+  "description": "Lightweight web dashboard for monitoring Claude Code processes",
+  "type": "module",
+  "bin": {
+    "claude-monitor": "./bin/cli.js"
+  },
+  "scripts": {
+    "start": "node bin/cli.js",
+    "test": "node --test 'test/*.test.js'"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

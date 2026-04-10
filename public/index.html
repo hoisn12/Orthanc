@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code Monitor</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="snb">
+      <div class="snb-logo">CCM</div>
+      <a class="snb-item active" data-page="monitor" href="#">
+        <span class="snb-icon">&#9654;</span>
+        <span class="snb-label">Monitor</span>
+      </a>
+      <a class="snb-item" data-page="tokens" href="#">
+        <span class="snb-icon">&#9673;</span>
+        <span class="snb-label">Tokens</span>
+      </a>
+      <a class="snb-item" data-page="harness" href="#">
+        <span class="snb-icon">&#9881;</span>
+        <span class="snb-label">Harness</span>
+      </a>
+      <a class="snb-item" data-page="workflow" href="#">
+        <span class="snb-icon">&#9702;</span>
+        <span class="snb-label">Flow</span>
+      </a>
+    </nav>
+
+    <div class="main">
+      <div class="header">
+        <h1>Claude Code Monitor</h1>
+        <div class="project-selector">
+          <input type="text" id="projectInput" placeholder="Project path (e.g. /path/to/project)" spellcheck="false">
+          <button id="projectBtn">Switch</button>
+        </div>
+        <span class="project-name" id="projectName">loading...</span>
+        <div class="status">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Connecting</span>
+        </div>
+      </div>
+
+      <!-- Page: Monitor -->
+      <div class="page active" id="page-monitor">
+        <div class="grid grid-1x2">
+          <div class="panel">
+            <div class="panel-title">Active Sessions</div>
+            <div id="sessions"></div>
+            <div class="panel-title" style="margin-top:14px">Sub-Agents</div>
+            <div id="subagents"><span style="color:var(--text-muted);font-size:12px">Waiting for events...</span></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Activity Feed</div>
+            <div id="feed"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Page: Tokens -->
+      <div class="page" id="page-tokens">
+        <div class="page-scroll">
+          <div id="tokenUsage"><span style="color:var(--text-muted);font-size:12px">Loading...</span></div>
+        </div>
+      </div>
+
+      <!-- Page: Harness -->
+      <div class="page" id="page-harness">
+        <div class="page-scroll">
+          <div id="harness"><span style="color:var(--text-muted);font-size:12px">Loading...</span></div>
+        </div>
+      </div>
+
+      <!-- Page: Workflow -->
+      <div class="page" id="page-workflow">
+        <div class="page-scroll">
+          <div id="workflow"><span style="color:var(--text-muted);font-size:12px">Loading...</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Viewer Modal -->
+  <div id="fileModal" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="modalTitle"></span>
+        <button class="modal-close" id="modalClose">&times;</button>
+      </div>
+      <pre class="modal-body" id="modalBody"></pre>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
