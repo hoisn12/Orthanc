@@ -110,9 +110,19 @@ function processEvent(event) {
     if (id && state.subagents.has(id)) state.subagents.get(id).status = 'done';
   }
 
-  // When stop arrives, remove prior assistant-streaming events for same PID
+  // When stop arrives, remove streaming events from the same turn (keep older turns)
   if (type === 'stop' && payload.last_assistant_message && pid) {
-    state.events = state.events.filter((e) => !(e.type === 'assistant-streaming' && e.pid === pid));
+    // Find the last user-prompt-submit for this PID to identify the current turn boundary
+    let turnStart = 0;
+    for (let i = state.events.length - 1; i >= 0; i--) {
+      if (state.events[i].type === 'user-prompt-submit' && state.events[i].pid === pid) {
+        turnStart = i;
+        break;
+      }
+    }
+    state.events = state.events.filter((e, idx) =>
+      !(e.type === 'assistant-streaming' && e.pid === pid && idx >= turnStart)
+    );
   }
 
   // Track current running tool (debounced clear to avoid flicker)
@@ -222,6 +232,7 @@ function updateStatus() {
 }
 
 function renderSessions() {
+  renderCurrentTool();
   const el = document.getElementById('sessions');
   if (state.sessions.length === 0) {
     el.innerHTML = '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
