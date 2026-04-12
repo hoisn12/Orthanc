@@ -213,8 +213,7 @@ function renderCurrentTool() {
       <span class="current-tool-indicator"></span>
       <span class="current-tool-pid">P${best.pid}</span>
       <span class="current-tool-name">${best.type}</span>
-      <span class="current-tool-detail">${detail}</span>
-      <span class="current-tool-ago">${ago}</span>
+      <span class="current-tool-detail">${detail} \u00B7 ${ago}</span>
     </div>`;
     return;
   }

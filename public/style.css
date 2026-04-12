@@ -413,14 +413,6 @@ body {
   color: var(--accent);
 }
 
-.current-tool-ago {
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
 /* ========== Config ========== */
 .config-section { margin-bottom: 14px; }
 .config-section h3 {
