@@ -1,10 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventStore } from '../src/event-store.js';
+import { createTestDb } from './test-db.js';
 
 describe('EventStore', () => {
   it('adds events and returns them', () => {
-    const store = new EventStore(10);
+    const store = new EventStore(10, { db: createTestDb() });
     store.add({ type: 'test', payload: { foo: 1 } });
     store.add({ type: 'test2', payload: { bar: 2 } });
 
@@ -17,7 +18,7 @@ describe('EventStore', () => {
   });
 
   it('enforces maxSize', () => {
-    const store = new EventStore(3);
+    const store = new EventStore(3, { db: createTestDb() });
     for (let i = 0; i < 5; i++) {
       store.add({ type: `event-${i}` });
     }
@@ -27,7 +28,7 @@ describe('EventStore', () => {
   });
 
   it('notifies subscribers', () => {
-    const store = new EventStore();
+    const store = new EventStore(100, { db: createTestDb() });
     const received = [];
     store.subscribe((e) => received.push(e));
     store.add({ type: 'ping' });
@@ -37,7 +38,7 @@ describe('EventStore', () => {
   });
 
   it('unsubscribe stops notifications', () => {
-    const store = new EventStore();
+    const store = new EventStore(100, { db: createTestDb() });
     const received = [];
     const unsub = store.subscribe((e) => received.push(e));
     store.add({ type: 'a' });
@@ -48,7 +49,7 @@ describe('EventStore', () => {
   });
 
   it('getRecent respects limit', () => {
-    const store = new EventStore(100);
+    const store = new EventStore(100, { db: createTestDb() });
     for (let i = 0; i < 10; i++) store.add({ type: `e-${i}` });
     const events = store.getRecent(3);
     assert.equal(events.length, 3);

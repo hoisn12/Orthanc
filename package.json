@@ -11,9 +11,17 @@
     "test": "node --test 'test/*.test.js'"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "better-sqlite3": "^12.8.0",
+    "express": "^5.1.0",
+    "marked": "^18.0.0"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3@12.8.0",
+      "better-sqlite3"
+    ]
   }
 }

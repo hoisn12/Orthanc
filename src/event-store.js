@@ -1,8 +1,24 @@
+import { getDb } from './db.js';
+
 export class EventStore {
-  constructor(maxSize = 500) {
+  constructor(maxSize = 2000, { db } = {}) {
     this.maxSize = maxSize;
-    this.events = [];
     this.listeners = new Set();
+    this.db = db || getDb();
+
+    this._stmtInsert = this.db.prepare(
+      'INSERT INTO events (id, timestamp, type, session_id, pid, payload) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    this._stmtRecent = this.db.prepare(
+      'SELECT * FROM events ORDER BY timestamp DESC LIMIT ?'
+    );
+    this._stmtRecentByPid = this.db.prepare(
+      'SELECT * FROM events WHERE pid = ? ORDER BY timestamp DESC LIMIT ?'
+    );
+    this._stmtCount = this.db.prepare('SELECT COUNT(*) as cnt FROM events');
+    this._stmtPrune = this.db.prepare(
+      'DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY timestamp ASC LIMIT ?)'
+    );
   }
 
   add(event) {
@@ -11,10 +27,22 @@ export class EventStore {
       timestamp: new Date().toISOString(),
       ...event,
     };
-    this.events.push(entry);
-    if (this.events.length > this.maxSize) {
-      this.events.shift();
+
+    this._stmtInsert.run(
+      entry.id,
+      entry.timestamp,
+      entry.type || '',
+      entry.sessionId || null,
+      entry.pid || null,
+      JSON.stringify(entry.payload || {})
+    );
+
+    // Prune old events
+    const { cnt } = this._stmtCount.get();
+    if (cnt > this.maxSize) {
+      this._stmtPrune.run(cnt - this.maxSize);
     }
+
     for (const listener of this.listeners) {
       listener(entry);
     }
@@ -22,15 +50,28 @@ export class EventStore {
   }
 
   getRecent(limit = 50, filter = {}) {
-    let results = this.events;
+    let rows;
     if (filter.pid) {
-      results = results.filter((e) => e.pid === filter.pid);
+      rows = this._stmtRecentByPid.all(filter.pid, limit);
+    } else {
+      rows = this._stmtRecent.all(limit);
     }
-    return results.slice(-limit);
+    return rows.map(rowToEvent).reverse();
   }
 
   subscribe(listener) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+}
+
+function rowToEvent(row) {
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    type: row.type,
+    sessionId: row.session_id,
+    pid: row.pid,
+    payload: JSON.parse(row.payload || '{}'),
+  };
 }

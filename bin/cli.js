@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { createServer } from '../src/server.js';
-import { installHooks } from '../src/hook-installer.js';
+import { detectProvider } from '../src/providers/registry.js';
 
 const args = process.argv.slice(2);
 
@@ -14,40 +14,45 @@ function getArg(name, defaultValue) {
 
 const port = parseInt(getArg('--port', '7432'), 10);
 const projectRoot = path.resolve(getArg('--project', process.cwd()));
+const providerFlag = getArg('--provider', 'auto');
 const shouldInstallHooks = args.includes('--install-hooks');
 const noOpen = args.includes('--no-open');
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-claude-monitor - Claude Code Process Monitor
+claude-monitor - CLI Process Monitor
 
 Usage:
   claude-monitor [options]
 
 Options:
-  --project <path>    Target project directory (default: cwd)
-  --port <number>     Server port (default: 7432)
-  --install-hooks     Auto-install monitor hooks into settings.local.json
-  --no-open           Don't open browser automatically
-  --help, -h          Show this help
+  --project <path>         Target project directory (default: cwd)
+  --port <number>          Server port (default: 7432)
+  --provider <name>        Provider: claude, codex, auto (default: auto)
+  --install-hooks          Auto-install monitor hooks
+  --no-open                Don't open browser automatically
+  --help, -h               Show this help
 `);
   process.exit(0);
 }
 
-console.log(`\n  Claude Code Monitor`);
-console.log(`  Project: ${projectRoot}`);
-console.log(`  Port:    ${port}\n`);
+const provider = detectProvider({ provider: providerFlag, projectRoot });
+
+console.log(`\n  CLI Monitor`);
+console.log(`  Provider: ${provider.displayName}`);
+console.log(`  Project:  ${projectRoot}`);
+console.log(`  Port:     ${port}\n`);
 
 if (shouldInstallHooks) {
   try {
-    const result = installHooks(projectRoot, port);
+    const result = provider.installHooks(projectRoot, port);
     console.log(`  Hooks installed: ${result.installed} events → ${result.path}\n`);
   } catch (err) {
     console.error(`  Failed to install hooks: ${err.message}\n`);
   }
 }
 
-const { start, stop } = createServer({ projectRoot, port });
+const { start, stop } = createServer({ projectRoot, port, provider });
 
 start().then(() => {
   const url = `http://localhost:${port}`;

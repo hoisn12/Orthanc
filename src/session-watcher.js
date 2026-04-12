@@ -1,10 +1,8 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 
 export class SessionWatcher {
-  constructor(projectFilter = null, pollInterval = 5000) {
-    this.sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
+  constructor(provider, projectFilter = null, pollInterval = 5000) {
+    this.provider = provider;
     this.projectFilter = projectFilter ? path.resolve(projectFilter) : null;
     this.pollInterval = pollInterval;
     this.sessions = new Map();
@@ -24,22 +22,26 @@ export class SessionWatcher {
   }
 
   poll() {
-    if (!fs.existsSync(this.sessionsDir)) return;
+    const files = this.provider.listSessionFiles();
+    if (files.length === 0) return;
 
-    const files = fs.readdirSync(this.sessionsDir).filter((f) => f.endsWith('.json'));
+    const sessionsDir = this.provider.getSessionsDir();
     const currentPids = new Set();
 
     for (const file of files) {
       try {
-        const filePath = path.join(this.sessionsDir, file);
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const filePath = path.join(sessionsDir, file);
+        const data = this.provider.parseSessionFile(filePath);
+        if (!data) continue;
         const pid = data.pid;
         currentPids.add(pid);
 
         if (this.projectFilter && data.cwd !== this.projectFilter) continue;
 
         const alive = isProcessAlive(pid);
-        const uptime = alive ? Date.now() - data.startedAt : null;
+        if (!alive) continue;
+
+        const uptime = Date.now() - data.startedAt;
 
         this.sessions.set(pid, {
           pid,
@@ -47,7 +49,7 @@ export class SessionWatcher {
           cwd: data.cwd,
           startedAt: data.startedAt,
           kind: data.kind,
-          name: data.name || `session-${pid}`,
+          name: data.name,
           entrypoint: data.entrypoint,
           alive,
           uptime,
@@ -57,11 +59,10 @@ export class SessionWatcher {
       }
     }
 
-    // mark sessions whose files were removed as dead
+    // remove dead sessions (file removed or process not alive)
     for (const [pid, session] of this.sessions) {
-      if (!currentPids.has(pid)) {
-        session.alive = false;
-        session.uptime = null;
+      if (!currentPids.has(pid) || !isProcessAlive(pid)) {
+        this.sessions.delete(pid);
       }
     }
   }
@@ -74,10 +75,7 @@ export class SessionWatcher {
 
   getSessions() {
     return Array.from(this.sessions.values())
-      .sort((a, b) => {
-        if (a.alive !== b.alive) return a.alive ? -1 : 1;
-        return (b.startedAt || 0) - (a.startedAt || 0);
-      });
+      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
   }
 
   getBySessionId(sessionId) {

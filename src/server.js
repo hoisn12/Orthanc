@@ -7,26 +7,57 @@ import { parseProjectConfig } from './config-parser.js';
 import { SessionWatcher } from './session-watcher.js';
 import { installHooks, uninstallHooks } from './hook-installer.js';
 import { getTokenUsage } from './token-tracker.js';
+import { listProviders } from './providers/registry.js';
+import { MetricsStore } from './metrics-store.js';
+import { OtelReceiver } from './otel-receiver.js';
+import { getDb, closeDb } from './db.js';
+import { TokenStore } from './token-store.js';
+import { syncAll } from './token-sync.js';
+import { JsonlWatcher } from './jsonl-watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createServer({ projectRoot, port = 7432 }) {
+export function createServer({ projectRoot, port = 7432, provider }) {
   const app = express();
-  const eventStore = new EventStore(500);
+  const db = getDb();
+  const eventStore = new EventStore(2000);
+  const metricsStore = new MetricsStore();
+  const otelReceiver = new OtelReceiver(eventStore, metricsStore);
+  const tokenStore = new TokenStore();
+
+  // Prepared statements for usage table
+  const upsertUsage = db.prepare(
+    'INSERT OR REPLACE INTO usage (session_id, data, received_at) VALUES (?, ?, ?)'
+  );
+  const selectUsage = db.prepare(
+    'SELECT * FROM usage ORDER BY received_at DESC'
+  );
   let currentProject = projectRoot;
-  const sessionWatcher = new SessionWatcher(currentProject, 5000);
+  const sessionWatcher = new SessionWatcher(provider, currentProject, 5000);
 
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use('/vendor', express.static(path.join(__dirname, '..', 'node_modules', 'marked', 'lib')));
 
   // --- REST API ---
+
+  app.get('/api/provider', (_req, res) => {
+    res.json({
+      name: provider.name,
+      displayName: provider.displayName,
+      hookEvents: provider.getHookEvents(),
+      configDir: provider.getConfigDirName(),
+      available: listProviders(),
+    });
+  });
 
   app.get('/api/config', (req, res) => {
     try {
       const target = req.query.project ? path.resolve(req.query.project) : currentProject;
-      const config = parseProjectConfig(target);
+      const config = parseProjectConfig(provider, target);
       config.projectRoot = target;
       config.projectName = path.basename(target);
+      config.provider = provider.name;
       res.json(config);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -41,10 +72,12 @@ export function createServer({ projectRoot, port = 7432 }) {
     const resolved = path.resolve(projectPath);
     currentProject = resolved;
     sessionWatcher.setProjectFilter(resolved);
+    jsonlWatcher.setProjectRoot(resolved);
     try {
-      const config = parseProjectConfig(resolved);
+      const config = parseProjectConfig(provider, resolved);
       config.projectRoot = resolved;
       config.projectName = path.basename(resolved);
+      config.provider = provider.name;
       res.json(config);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -120,11 +153,8 @@ export function createServer({ projectRoot, port = 7432 }) {
     if (!filePath) return res.status(400).json({ error: 'path is required' });
 
     const resolved = path.resolve(filePath);
-    // Security: only allow reading .md files under .claude/ directories or CLAUDE.md
-    const basename = path.basename(resolved);
-    const inClaude = resolved.includes('/.claude/') || basename === 'CLAUDE.md' || basename === 'AGENTS.md' || basename === 'ARCHITECTURE.md';
-    if (!inClaude || !resolved.endsWith('.md')) {
-      return res.status(403).json({ error: 'Only .md files in .claude/ directories are allowed' });
+    if (!provider.isFileReadAllowed(resolved)) {
+      return res.status(403).json({ error: 'Only .md files in config directories are allowed' });
     }
 
     try {
@@ -136,9 +166,12 @@ export function createServer({ projectRoot, port = 7432 }) {
   });
 
   // Token usage
-  app.get('/api/tokens', async (_req, res) => {
+  app.get('/api/tokens', (req, res) => {
     try {
-      const usage = await getTokenUsage(currentProject);
+      const { from, to } = req.query;
+      const usage = getTokenUsage(provider, tokenStore, { from: from || null, to: to || null });
+      usage.realtime = metricsStore.getCostTimeline(60000);
+      usage.realtimeLatency = metricsStore.getApiLatencyStats(3600000);
       res.json(usage);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -146,27 +179,110 @@ export function createServer({ projectRoot, port = 7432 }) {
   });
 
   // Hook management
-  app.post('/api/hooks/install', (_req, res) => {
+  app.get('/api/hooks/status', (_req, res) => {
     try {
-      const result = installHooks(currentProject, port);
+      const status = provider.getMonitorStatus(currentProject);
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/hooks/install', (req, res) => {
+    try {
+      const options = req.body || {};
+      const result = installHooks(provider, currentProject, port, options);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/hooks/uninstall', (_req, res) => {
+  app.post('/api/hooks/uninstall', (req, res) => {
     try {
-      const result = uninstallHooks(currentProject);
+      const options = req.body || {};
+      const result = uninstallHooks(provider, currentProject, options);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // --- Statusline usage receiver ---
+
+  app.post('/api/statusline', (req, res) => {
+    const data = req.body || {};
+    const sessionId = data.session_id;
+    if (!sessionId) return res.status(400).json({ error: 'session_id required' });
+
+    upsertUsage.run(sessionId, JSON.stringify(data), Date.now());
+    res.json({ ok: true });
+  });
+
+  app.get('/api/usage', (_req, res) => {
+    const rows = selectUsage.all();
+    const entries = rows.map((r) => ({
+      ...JSON.parse(r.data),
+      _receivedAt: r.received_at,
+    }));
+    res.json(entries);
+  });
+
+  // --- OTLP HTTP/JSON receiver ---
+
+  app.post('/v1/logs', (req, res) => {
+    otelReceiver.ingestLogs(req.body);
+    res.json({});
+  });
+
+  app.post('/v1/metrics', (req, res) => {
+    otelReceiver.ingestMetrics(req.body);
+    res.json({});
+  });
+
+  app.post('/v1/traces', (req, res) => {
+    otelReceiver.ingestTraces(req.body);
+    res.json({});
+  });
+
+  // --- Metrics query API ---
+
+  app.get('/api/metrics', (req, res) => {
+    const window = parseInt(req.query.window) || 3600000;
+    res.json(metricsStore.getSummary(window));
+  });
+
+  app.get('/api/metrics/latency', (req, res) => {
+    const window = parseInt(req.query.window) || 3600000;
+    res.json(metricsStore.getApiLatencyStats(window));
+  });
+
+  app.get('/api/metrics/tools', (req, res) => {
+    const window = parseInt(req.query.window) || 3600000;
+    res.json(metricsStore.getToolStats(window));
+  });
+
+  app.get('/api/metrics/cost-timeline', (req, res) => {
+    const bucket = parseInt(req.query.bucket) || 60000;
+    res.json(metricsStore.getCostTimeline(bucket));
+  });
+
+  // JSONL watcher for streaming assistant responses
+  const jsonlWatcher = new JsonlWatcher({
+    provider,
+    sessionWatcher,
+    eventStore,
+    tokenStore,
+    projectRoot: currentProject,
+    pollInterval: 1000,
   });
 
   // Start
-  function start() {
+  async function start() {
+    // Initial sync: populate DB from JSONL files
+    await syncAll(provider, currentProject, tokenStore);
     sessionWatcher.start();
+    jsonlWatcher.start();
     return new Promise((resolve) => {
       const server = app.listen(port, () => {
         resolve(server);
@@ -176,6 +292,8 @@ export function createServer({ projectRoot, port = 7432 }) {
 
   function stop() {
     sessionWatcher.stop();
+    jsonlWatcher.stop();
+    closeDb();
   }
 
   return { app, start, stop };

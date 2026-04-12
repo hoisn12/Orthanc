@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Code Monitor</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -22,20 +23,16 @@
         <span class="snb-icon">&#9881;</span>
         <span class="snb-label">Harness</span>
       </a>
-      <a class="snb-item" data-page="workflow" href="#">
-        <span class="snb-icon">&#9702;</span>
-        <span class="snb-label">Flow</span>
+<a class="snb-item" data-page="settings" href="#" style="margin-top:auto;margin-bottom:10px">
+        <span class="snb-icon">&#9965;</span>
+        <span class="snb-label">Settings</span>
       </a>
     </nav>
 
     <div class="main">
       <div class="header">
         <h1>Claude Code Monitor</h1>
-        <div class="project-selector">
-          <input type="text" id="projectInput" placeholder="Project path (e.g. /path/to/project)" spellcheck="false">
-          <button id="projectBtn">Switch</button>
-        </div>
-        <span class="project-name" id="projectName">loading...</span>
+        <div id="currentTool" class="header-tool"></div>
         <div class="status">
           <span class="status-dot" id="statusDot"></span>
           <span id="statusText">Connecting</span>
@@ -46,13 +43,14 @@
       <div class="page active" id="page-monitor">
         <div class="grid grid-1x2">
           <div class="panel">
-            <div class="panel-title">Active Sessions</div>
+            <div id="rateLimits"></div>
             <div id="sessions"></div>
-            <div class="panel-title" style="margin-top:14px">Sub-Agents</div>
-            <div id="subagents"><span style="color:var(--text-muted);font-size:12px">Waiting for events...</span></div>
           </div>
           <div class="panel">
-            <div class="panel-title">Activity Feed</div>
+            <div class="panel-title-row">
+              <span class="panel-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Activity Feed</span>
+              <button class="hook-flow-toggle" id="toggleToolEvents">Show tool events</button>
+            </div>
             <div id="feed"></div>
           </div>
         </div>
@@ -72,10 +70,10 @@
         </div>
       </div>
 
-      <!-- Page: Workflow -->
-      <div class="page" id="page-workflow">
+      <!-- Page: Settings -->
+      <div class="page" id="page-settings">
         <div class="page-scroll">
-          <div id="workflow"><span style="color:var(--text-muted);font-size:12px">Loading...</span></div>
+          <div id="settings"></div>
         </div>
       </div>
     </div>
@@ -92,6 +90,7 @@
     </div>
   </div>
 
+  <script src="/vendor/marked.umd.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

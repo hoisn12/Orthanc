@@ -9,6 +9,13 @@ const state = {
   hideMonitorHooks: false,
   filterPid: null,
   lastActivity: new Map(),
+  provider: null, // { name, displayName, hookEvents, configDir, available }
+  metrics: null, // OTel realtime metrics from /api/metrics
+  usage: [], // statusline usage data from /api/usage
+  monitorStatus: null, // { hooks, otel, statusline } from /api/hooks/status
+  showToolEvents: false, // toggle for pre/post-tool-use in feed
+  currentTool: null, // { toolName, detail, pid, timestamp } — currently running tool
+  tokenFilter: { preset: 'all', from: null, to: null },
 };
 
 // --- Project switch ---
@@ -27,8 +34,8 @@ async function switchProject(projectPath) {
     }
     state.config = await res.json();
     renderHarness();
-    document.getElementById('projectName').textContent = state.config.projectRoot || 'unknown';
-    document.getElementById('projectInput').value = state.config.projectRoot || '';
+    const settingsInput = document.getElementById('settingsProjectInput');
+    if (settingsInput) settingsInput.value = state.config.projectRoot || '';
     await fetchSessions();
     await fetchTokenUsage();
   } catch (err) {
@@ -42,8 +49,6 @@ async function fetchConfig() {
   const res = await fetch('/api/config');
   state.config = await res.json();
   renderHarness();
-  document.getElementById('projectName').textContent = state.config.projectRoot || 'unknown';
-  document.getElementById('projectInput').value = state.config.projectRoot || '';
 }
 
 async function fetchSessions() {
@@ -57,7 +62,6 @@ async function fetchRecentEvents() {
   state.events = await res.json();
   state.events.forEach(processEvent);
   renderFeed();
-  renderSubagents();
 }
 
 // --- SSE ---
@@ -70,8 +74,11 @@ function connectSSE() {
     state.events.push(event);
     if (state.events.length > 500) state.events.shift();
     processEvent(event);
-    renderFeedItem(event);
-    renderSubagents();
+    if (event.type === 'stop' && event.payload?.last_assistant_message) {
+      renderFeed(); // Full re-render to remove replaced streaming events
+    } else {
+      renderFeedItem(event);
+    }
     renderSessions();
   };
   source.onerror = () => {
@@ -103,10 +110,106 @@ function processEvent(event) {
     if (id && state.subagents.has(id)) state.subagents.get(id).status = 'done';
   }
 
-  // Track last activity per session
-  if (pid) {
-    state.lastActivity.set(pid, { type, timestamp: event.timestamp });
+  // When stop arrives, remove prior assistant-streaming events for same PID
+  if (type === 'stop' && payload.last_assistant_message && pid) {
+    state.events = state.events.filter((e) => !(e.type === 'assistant-streaming' && e.pid === pid));
   }
+
+  // Track current running tool (debounced clear to avoid flicker)
+  if (type === 'pre-tool-use' || type === 'otel-tool-decision') {
+    if (state._clearToolTimer) { clearTimeout(state._clearToolTimer); state._clearToolTimer = null; }
+    state.currentTool = {
+      toolName: payload.tool_name || payload['tool.name'] || 'unknown',
+      detail: extractToolSummary(payload),
+      pid,
+      timestamp: event.timestamp,
+    };
+    renderCurrentTool();
+  } else if (type === 'post-tool-use' || type === 'otel-tool-result') {
+    if (state._clearToolTimer) clearTimeout(state._clearToolTimer);
+    state._clearToolTimer = setTimeout(() => {
+      state.currentTool = null;
+      state._clearToolTimer = null;
+      renderCurrentTool();
+    }, 500);
+  } else if (type === 'otel-api-request') {
+    // API call in progress — show model as current activity
+    if (state._clearToolTimer) { clearTimeout(state._clearToolTimer); state._clearToolTimer = null; }
+    const model = payload.model || payload['gen_ai.request.model'] || '';
+    if (model) {
+      state.currentTool = { toolName: 'API', detail: model, pid, timestamp: event.timestamp };
+      renderCurrentTool();
+    }
+  } else if (type === 'stop' || type === 'session-end') {
+    if (state._clearToolTimer) { clearTimeout(state._clearToolTimer); state._clearToolTimer = null; }
+    state.currentTool = null;
+    if (pid) state.lastActivity.delete(pid);
+    renderCurrentTool();
+  }
+
+  // Track last activity per session (except stop/session-end already handled)
+  if (pid && type !== 'stop' && type !== 'session-end') {
+    const rawDetail = extractDetail(event).replace(/<[^>]*>/g, '').replace(/[\r\n]+/g, ' ').trim();
+    state.lastActivity.set(pid, { type, timestamp: event.timestamp, detail: rawDetail });
+  }
+}
+
+function isToolEvent(type) {
+  return type === 'pre-tool-use' || type === 'post-tool-use';
+}
+
+function extractToolSummary(payload) {
+  const input = payload.tool_input || {};
+  const name = payload.tool_name || '';
+  let summary = name;
+  if (name === 'Bash') summary = (input.command || '').slice(0, 80);
+  else if (name === 'Edit' || name === 'Write') summary = input.file_path || '';
+  else if (name === 'Read') summary = input.file_path || '';
+  else if (name === 'Grep') summary = input.pattern || '';
+  else if (name === 'Glob') summary = input.pattern || '';
+  else if (name === 'Agent') summary = `${input.subagent_type || ''} \u2014 ${(input.description || '').slice(0, 50)}`;
+  return summary.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function renderCurrentTool() {
+  const el = document.getElementById('currentTool');
+  if (!el) return;
+  const t = state.currentTool;
+  if (t) {
+    const pidLabel = t.pid ? `<span class="current-tool-pid">P${t.pid}</span>` : '';
+    el.innerHTML = `<div class="current-tool">
+      <span class="current-tool-indicator"></span>
+      ${pidLabel}
+      <span class="current-tool-name">${t.toolName}</span>
+      <span class="current-tool-detail">${t.detail}</span>
+    </div>`;
+    return;
+  }
+
+  // No active tool — find most recent activity across all alive sessions
+  const aliveSessions = state.sessions.filter((s) => s.alive);
+  let best = null;
+  for (const s of aliveSessions) {
+    const a = state.lastActivity.get(s.pid);
+    if (a && (!best || new Date(a.timestamp) > new Date(best.timestamp))) {
+      best = { ...a, pid: s.pid };
+    }
+  }
+
+  if (best) {
+    const ago = formatTimeAgo(best.timestamp);
+    const detail = best.detail || '';
+    el.innerHTML = `<div class="current-tool recent">
+      <span class="current-tool-indicator"></span>
+      <span class="current-tool-pid">P${best.pid}</span>
+      <span class="current-tool-name">${best.type}</span>
+      <span class="current-tool-detail">${detail}</span>
+      <span class="current-tool-ago">${ago}</span>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = '';
 }
 
 // --- Monitor renderers ---
@@ -121,38 +224,116 @@ function updateStatus() {
 function renderSessions() {
   const el = document.getElementById('sessions');
   if (state.sessions.length === 0) {
-    el.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
+    el.innerHTML = '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
     return;
   }
-  el.innerHTML = state.sessions.map((s) => {
+
+  const cards = state.sessions.map((s) => {
     const uptime = s.alive && s.uptime ? formatDuration(s.uptime) : 'ended';
     const selected = state.filterPid === s.pid ? ' selected' : '';
 
-    // Running subagents for this session
-    const runningAgents = Array.from(state.subagents.values()).filter((a) => a.pid === s.pid && a.status === 'running');
+    // Subagents for this session
+    const sessionAgents = Array.from(state.subagents.values()).filter((a) => a.pid === s.pid);
     // Last activity
     const activity = state.lastActivity.get(s.pid);
 
     let activityHTML = '';
-    if (s.alive && (runningAgents.length > 0 || activity)) {
-      const parts = [];
-      if (runningAgents.length > 0) {
-        parts.push(`<span class="session-activity-badge running">${runningAgents.length} agent${runningAgents.length > 1 ? 's' : ''}</span>`);
-      }
-      if (activity) {
-        const ago = formatTimeAgo(activity.timestamp);
-        parts.push(`<span class="session-activity-type">${activity.type}</span> <span class="session-activity-ago">${ago}</span>`);
-      }
-      activityHTML = `<div class="session-activity">${parts.join(' ')}</div>`;
+    if (s.alive && activity) {
+      const ago = formatTimeAgo(activity.timestamp);
+      activityHTML = `<div class="session-activity">
+        <span class="session-activity-type">${activity.type}</span> <span class="session-activity-ago">${ago}</span>
+      </div>`;
     }
 
-    return `<div class="session-card ${s.alive ? '' : 'dead'}${selected}" data-pid="${s.pid}" style="cursor:pointer">
-      <div class="session-pid">${s.alive ? '\u25CF' : '\u25CB'} PID ${s.pid} | ${uptime}</div>
+    let agentsHTML = '';
+    if (sessionAgents.length > 0) {
+      agentsHTML = `<div class="session-agents">${sessionAgents.slice().reverse().map((a) =>
+        `<div class="subagent-item">
+          <span class="dot ${a.status}"></span>
+          <span>${a.type}</span>
+          <span style="color:var(--text-muted)">(${a.model})</span>
+          <span style="color:var(--text-secondary)">${a.description}</span>
+        </div>`
+      ).join('')}</div>`;
+    }
+
+    // Consider "working" if last hook/streaming activity within 60s, or statusline data is fresh (within 15s)
+    const activityAge = activity ? Date.now() - new Date(activity.timestamp).getTime() : Infinity;
+    const u_ = getUsageForSession(s.sessionId);
+    const usageAge = u_?._receivedAt ? Date.now() - u_._receivedAt : Infinity;
+    const working = s.alive && (activityAge < 60000 || usageAge < 15000);
+
+    // Merge live usage data
+    const u = getUsageForSession(s.sessionId);
+    let usageHTML = '';
+    if (u) {
+      const model = u.model?.display_name || u.model?.id || '';
+      const cost = u.cost?.total_cost_usd ?? 0;
+      const ctx = u.context_window || {};
+      const ctxPct = ctx.used_percentage ?? 0;
+      const ctxSize = ctx.context_window_size || 0;
+      const linesAdded = u.cost?.total_lines_added ?? 0;
+      const linesRemoved = u.cost?.total_lines_removed ?? 0;
+      const duration = u.cost?.total_duration_ms ?? 0;
+      const ctxColor = ctxPct > 80 ? 'var(--red)' : ctxPct > 50 ? 'var(--yellow)' : 'var(--green)';
+
+      usageHTML = `<div class="session-usage">
+        <div class="session-usage-stats">
+          ${model ? `<span class="session-usage-model">${model}</span>` : ''}
+          <span class="session-usage-cost">$${cost.toFixed(4)}</span>
+          <span class="session-usage-duration">${formatDuration(duration)}</span>
+          <span style="color:var(--green)">+${linesAdded} lines</span>
+          <span style="color:var(--red)">-${linesRemoved} lines</span>
+        </div>
+        <div class="usage-gauge" style="margin-top:4px">
+          <div class="usage-gauge-track">
+            <div class="usage-gauge-fill" style="width:${Math.min(ctxPct, 100)}%;background:${ctxColor}"></div>
+          </div>
+          <div class="usage-gauge-label">ctx ${ctxPct}%${ctxSize ? ` (${fmtNum(ctxSize)})` : ''}</div>
+        </div>
+      </div>`;
+    }
+
+    // Token usage from JSONL
+    const tk = state.tokens?.sessions?.find((ts) => ts.sessionId === s.sessionId);
+    let tokensHTML = '';
+    if (tk) {
+      tokensHTML = `<div class="session-tokens">
+        <span title="Input">in:${fmtNum(tk.input)}</span>
+        <span title="Output">out:${fmtNum(tk.output)}</span>
+        <span title="Cache Read">cr:${fmtNum(tk.cacheRead)}</span>
+        <span title="Total">tot:${fmtNum(tk.total)}</span>
+        <span class="session-tokens-cost">$${tk.cost.toFixed(2)}</span>
+      </div>`;
+    }
+
+    const html = `<div class="session-card ${s.alive ? '' : 'dead'}${selected}" data-pid="${s.pid}" style="cursor:pointer">
+      <div class="session-pid${working ? ' working' : ''}">${s.alive ? '\u25CF' : '\u25CB'} PID ${s.pid} | ${uptime}</div>
       <div class="session-meta">${s.name} \u2014 ${shortenPath(s.cwd)}</div>
       <div class="session-meta">${s.kind || ''} / ${s.entrypoint || ''}</div>
       ${activityHTML}
+      ${agentsHTML}
+      ${usageHTML}
+      ${tokensHTML}
     </div>`;
-  }).join('');
+
+    return { html, working };
+  });
+
+  const active = cards.filter((c) => c.working).map((c) => c.html);
+  const idle = cards.filter((c) => !c.working).map((c) => c.html);
+
+  let out = '';
+  if (active.length > 0) {
+    out += `<div class="panel-title">Active Sessions <span class="session-count">${active.length}</span></div>${active.join('')}`;
+  }
+  if (idle.length > 0) {
+    out += `<div class="panel-title" style="margin-top:${active.length > 0 ? '14px' : '0'}">Idle Sessions <span class="session-count">${idle.length}</span></div>${idle.join('')}`;
+  }
+  if (out === '') {
+    out = '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
+  }
+  el.innerHTML = out;
 
   el.querySelectorAll('.session-card[data-pid]').forEach((card) => {
     card.addEventListener('click', () => {
@@ -204,11 +385,15 @@ function renderFeed() {
   if (state.filterPid) {
     filtered = filtered.filter((e) => e.pid === state.filterPid);
   }
+  if (!state.showToolEvents) {
+    filtered = filtered.filter((e) => !isToolEvent(e.type));
+  }
   document.getElementById('feed').innerHTML = filtered.slice().reverse().slice(0, 100).map(eventToHTML).join('');
 }
 
 function renderFeedItem(event) {
   if (state.filterPid && event.pid !== state.filterPid) return;
+  if (!state.showToolEvents && isToolEvent(event.type)) return;
   const el = document.getElementById('feed');
   el.insertAdjacentHTML('afterbegin', eventToHTML(event));
   while (el.children.length > 200) el.removeChild(el.lastChild);
@@ -225,37 +410,75 @@ function eventToHTML(event) {
   </div>`;
 }
 
+function renderMd(text) {
+  if (typeof marked !== 'undefined' && marked.parse) {
+    return marked.parse(text, { breaks: true });
+  }
+  return text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+}
+
 function extractDetail(event) {
   const p = event.payload || {};
+  const type = event.type;
+
+  // OTel events
+  if (type === 'otel-api-request') {
+    const model = p.model || p['gen_ai.request.model'] || '';
+    const dur = p.duration_ms || p.duration || '';
+    const cost = p.cost_usd || p.cost || '';
+    return `${model}${dur ? ` ${Math.round(dur)}ms` : ''}${cost ? ` $${Number(cost).toFixed(4)}` : ''}`;
+  }
+  if (type === 'otel-api-error') {
+    const model = p.model || p['gen_ai.request.model'] || '';
+    const status = p.status_code || p['http.status_code'] || '';
+    const errType = p.error_type || p['error.type'] || '';
+    return `${model} ${errType}${status ? ` (${status})` : ''}`;
+  }
+  if (type === 'otel-tool-result') {
+    const tool = p.tool_name || p['tool.name'] || '';
+    const dur = p.duration_ms || p.duration || '';
+    const ok = p.success !== 'false' && p.success !== false;
+    return `${tool}${dur ? ` ${Math.round(dur)}ms` : ''} ${ok ? '\u2713' : '\u2717'}`;
+  }
+  if (type === 'otel-user-prompt') return 'prompt submitted';
+  if (type === 'otel-span') return `${p.name || 'span'} ${p.durationMs ? Math.round(p.durationMs) + 'ms' : ''}`;
+
+  // Assistant streaming from JSONL watcher
+  if (type === 'assistant-streaming' && p.text) {
+    return `<div class="event-assistant-msg event-md">${renderMd(p.text)}</div>`;
+  }
+
+  // Hook events
+  if (type === 'stop' && p.last_assistant_message) {
+    return `<div class="event-assistant-msg event-md">${renderMd(p.last_assistant_message)}</div>`;
+  }
+  if (type === 'user-prompt-submit' && p.prompt) {
+    const msg = (typeof p.prompt === 'string' ? p.prompt : '');
+    return `<div class="event-user-msg event-md">${renderMd(msg)}</div>`;
+  }
+  // Task events
+  if (type === 'task-created' && p.task_subject) {
+    const team = p.teammate_name ? ` [${p.teammate_name}]` : '';
+    return `<span class="event-task">\u2795 ${p.task_subject}${team}</span>`;
+  }
+  if (type === 'task-completed' && p.task_subject) {
+    const team = p.teammate_name ? ` [${p.teammate_name}]` : '';
+    return `<span class="event-task done">\u2705 ${p.task_subject}${team}</span>`;
+  }
+
   if (p.tool_name) {
     const input = p.tool_input || {};
-    if (p.tool_name === 'Bash') return `Bash: ${(input.command || '').slice(0, 60)}`;
+    if (p.tool_name === 'Bash') return `Bash: ${input.command || ''}`;
     if (p.tool_name === 'Edit' || p.tool_name === 'Write') return `${p.tool_name}: ${input.file_path || ''}`;
     if (p.tool_name === 'Read') return `Read: ${input.file_path || ''}`;
-    if (p.tool_name === 'Agent') return `Agent: ${input.subagent_type || ''} \u2014 ${(input.description || '').slice(0, 40)}`;
+    if (p.tool_name === 'Agent') return `Agent: ${input.subagent_type || ''} \u2014 ${input.description || ''}`;
     return p.tool_name;
   }
   if (p.agent_type) return `${p.agent_type} (${p.agent_id || ''})`;
-  if (p.prompt) return (typeof p.prompt === 'string' ? p.prompt : '').slice(0, 80);
+  if (p.prompt) return (typeof p.prompt === 'string' ? p.prompt : '');
   return '';
 }
 
-function renderSubagents() {
-  const el = document.getElementById('subagents');
-  const agents = Array.from(state.subagents.values());
-  if (agents.length === 0) {
-    el.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Waiting for events...</span>';
-    return;
-  }
-  el.innerHTML = agents.slice().reverse().map((a) => `
-    <div class="subagent-item">
-      <span class="dot ${a.status}"></span>
-      <span>${a.type}</span>
-      <span style="color:var(--text-muted)">(${a.model})</span>
-      <span style="color:var(--text-secondary)">${a.description}</span>
-    </div>
-  `).join('');
-}
 
 // ============================================================
 // File Viewer Modal
@@ -296,7 +519,9 @@ function initModalHandlers() {
 // ============================================================
 
 function isMonitorHook(h) {
-  return h._marker === '__claude_monitor__';
+  if (h._marker === '__claude_monitor__') return true;
+  if (h.type === 'http' && h.url && /^http:\/\/localhost:\d+\/api\/events\//.test(h.url)) return true;
+  return false;
 }
 
 function isMonitorInstalled() {
@@ -315,17 +540,26 @@ function renderHarness() {
   if (!c) return;
   const el = document.getElementById('harness');
 
-  const sections = [
-    harnessSection('Summary', renderSummaryBar(c), false),
-    harnessSection('Settings Layers', renderSettingsLayers(c)),
-    harnessSection('Permissions', renderPermissions(c)),
-    harnessSection('MCP Integrations', renderMcpServers(c)),
-    harnessSection('CLAUDE.md', renderClaudeMd(c)),
-    harnessSection('Skills & Agents', renderSkillsAgents(c)),
-    harnessSection('Rules', renderRulesSection(c)),
-    harnessSection('Hook Flow', renderHookFlow(c)),
-    harnessSection('Environment', renderEnvSection(c)),
-  ];
+  const sections = isCodex()
+    ? [
+        harnessSection('Summary', renderSummaryBar(c), false),
+        harnessSection('Settings Layers', renderSettingsLayers(c)),
+        harnessSection('Instruction Files', renderClaudeMd(c)),
+        harnessSection('Profiles & Plugins', renderProfilesPlugins(c)),
+        harnessSection('Hook Flow', renderHookFlow(c)),
+        harnessSection('Environment', renderEnvSection(c)),
+      ]
+    : [
+        harnessSection('Summary', renderSummaryBar(c), false),
+        harnessSection('Settings Layers', renderSettingsLayers(c)),
+        harnessSection('Permissions', renderPermissions(c)),
+        harnessSection('MCP Integrations', renderMcpServers(c)),
+        harnessSection('CLAUDE.md', renderClaudeMd(c)),
+        harnessSection('Skills & Agents', renderSkillsAgents(c)),
+        harnessSection('Rules', renderRulesSection(c)),
+        harnessSection('Hook Flow', renderHookFlow(c)),
+        harnessSection('Environment', renderEnvSection(c)),
+      ];
 
   el.innerHTML = sections.join('');
 
@@ -356,9 +590,6 @@ function renderHarness() {
       });
     });
   }
-
-  // Hook install/uninstall buttons
-  setupHookButtons();
 }
 
 function harnessSection(title, content, collapsible = true) {
@@ -381,15 +612,22 @@ function renderSummaryBar(c) {
   const mcpCount = (c.mcpServers || []).length;
   const mdCount = (c.claudeMdFiles || []).length;
 
-  const stats = [
-    { value: c.skills.length, label: 'Skills' },
-    { value: c.agents.length, label: 'Agents' },
-    { value: (c.rules || []).length, label: 'Rules' },
-    { value: hookCount, label: 'Hook Events' },
-    { value: permCount, label: 'Permissions' },
-    { value: mcpCount, label: 'MCP Servers' },
-    { value: mdCount, label: 'CLAUDE.md' },
-  ];
+  const stats = isCodex()
+    ? [
+        { value: (c.profiles || []).length, label: 'Profiles' },
+        { value: (c.plugins || []).length, label: 'Plugins' },
+        { value: hookCount, label: 'Hook Events' },
+        { value: mdCount, label: 'Instruction Files' },
+      ]
+    : [
+        { value: c.skills.length, label: 'Skills' },
+        { value: c.agents.length, label: 'Agents' },
+        { value: (c.rules || []).length, label: 'Rules' },
+        { value: hookCount, label: 'Hook Events' },
+        { value: permCount, label: 'Permissions' },
+        { value: mcpCount, label: 'MCP Servers' },
+        { value: mdCount, label: 'CLAUDE.md' },
+      ];
 
   return `<div class="harness-stats">${stats.map((s) =>
     `<div class="harness-stat"><div class="stat-value">${s.value}</div><div class="stat-label">${s.label}</div></div>`
@@ -512,6 +750,28 @@ function renderSkillsAgents(c) {
   </div>`;
 }
 
+function renderProfilesPlugins(c) {
+  const profiles = c.profiles || [];
+  const plugins = c.plugins || [];
+
+  const profilesHTML = profiles.length > 0
+    ? profiles.map((p) => `<div class="harness-card" ${p.filePath ? `data-file="${p.filePath}"` : ''}>
+        <div class="harness-card-name">${p.name}</div>
+      </div>`).join('')
+    : '<span style="color:var(--text-muted)">No profiles</span>';
+
+  const pluginsHTML = plugins.length > 0
+    ? plugins.map((p) => `<div class="harness-card">
+        <div class="harness-card-name">${p.name}</div>
+      </div>`).join('')
+    : '<span style="color:var(--text-muted)">No plugins</span>';
+
+  return `<div class="harness-2col">
+    <div><div class="config-section"><h3>Profiles (${profiles.length})</h3>${profilesHTML}</div></div>
+    <div><div class="config-section"><h3>Plugins (${plugins.length})</h3>${pluginsHTML}</div></div>
+  </div>`;
+}
+
 function renderRulesSection(c) {
   const rules = c.rules || [];
   if (rules.length === 0) return '<span style="color:var(--text-muted)">No rules</span>';
@@ -539,17 +799,12 @@ function renderRulesSection(c) {
 function renderHookFlow(c) {
   const hooks = c.hooks || {};
   const events = Object.keys(hooks);
-  if (events.length === 0) return '<span style="color:var(--text-muted)">No hooks</span>';
 
-  const installed = isMonitorInstalled();
   const headerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-    ${installed ? `<span class="hook-status-badge installed">Monitor: Installed</span>` : `<span class="hook-status-badge not-installed">Monitor: Not installed</span>`}
-    <div class="harness-hook-actions">
-      <button id="installHooksBtn" class="btn-sm btn-install" ${installed ? 'style="display:none"' : ''}>Install Hooks</button>
-      <button id="uninstallHooksBtn" class="btn-sm btn-uninstall" ${installed ? '' : 'style="display:none"'}>Uninstall</button>
-      <button id="toggleMonitorHooks" class="hook-flow-toggle">${state.hideMonitorHooks ? 'Show monitor hooks' : 'Hide monitor hooks'}</button>
-    </div>
+    <button id="toggleMonitorHooks" class="hook-flow-toggle">${state.hideMonitorHooks ? 'Show monitor hooks' : 'Hide monitor hooks'}</button>
   </div>`;
+
+  if (events.length === 0) return headerHTML + '<span style="color:var(--text-muted)">No hooks configured</span>';
 
   const flowHTML = events.map((event) => {
     const entries = hooks[event];
@@ -587,202 +842,162 @@ function renderEnvSection(c) {
   ).join('');
 }
 
-function setupHookButtons() {
-  const installBtn = document.getElementById('installHooksBtn');
-  const uninstallBtn = document.getElementById('uninstallHooksBtn');
-  if (!installBtn || !uninstallBtn) return;
-
-  installBtn.addEventListener('click', async () => {
-    installBtn.disabled = true;
-    installBtn.textContent = 'Installing...';
-    try {
-      const res = await fetch('/api/hooks/install', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        installBtn.textContent = `Installed (${data.installed})`;
-        await fetchConfig();
-      } else {
-        installBtn.textContent = 'Failed';
-        alert(data.error);
-      }
-    } catch (err) {
-      installBtn.textContent = 'Failed';
-      alert(err.message);
-    }
-    setTimeout(() => { installBtn.disabled = false; installBtn.textContent = 'Install Hooks'; }, 2000);
-  });
-
-  uninstallBtn.addEventListener('click', async () => {
-    uninstallBtn.disabled = true;
-    uninstallBtn.textContent = 'Removing...';
-    try {
-      const res = await fetch('/api/hooks/uninstall', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        uninstallBtn.textContent = `Removed (${data.removed})`;
-        await fetchConfig();
-      } else {
-        uninstallBtn.textContent = 'Failed';
-        alert(data.error);
-      }
-    } catch (err) {
-      uninstallBtn.textContent = 'Failed';
-      alert(err.message);
-    }
-    setTimeout(() => { uninstallBtn.disabled = false; uninstallBtn.textContent = 'Uninstall'; }, 2000);
-  });
-}
 
 // ============================================================
-// Workflow
+// Settings
 // ============================================================
 
-function renderWorkflow() {
-  const c = state.config;
-  const el = document.getElementById('workflow');
-  if (!c) { el.innerHTML = '<span class="wf-empty">No config loaded</span>'; return; }
-
-  const hooks = c.hooks || {};
-  const perms = c.permissions || {};
-  const rules = c.rules || [];
-  const skills = c.skills || [];
-  const agents = c.agents || [];
-
-  function hookList(eventName) {
-    const entries = hooks[eventName] || [];
-    if (entries.length === 0) return '<div class="wf-empty">No hooks</div>';
-    return entries.flatMap((e) => (e.hooks || []).map((h) => {
-      const isMon = h._marker === '__claude_monitor__';
-      const label = h.type === 'http' ? `http \u2192 ${h.url || ''}` : (h.command || '').slice(0, 70) || h.type;
-      const matcher = e.matcher && e.matcher !== '*' ? `<span class="wf-pill" style="background:var(--bg-hover);color:var(--accent)">${e.matcher}</span>` : '';
-      return `<div class="wf-sidebar-item" ${isMon ? 'style="opacity:0.5"' : ''}>
-        <span class="wf-dot" style="background:var(--orange)"></span>
-        ${matcher} ${label}${isMon ? ' <span style="color:var(--accent);font-weight:600">[monitor]</span>' : ''}
-      </div>`;
-    })).join('');
+async function fetchMonitorStatus() {
+  try {
+    const res = await fetch('/api/hooks/status');
+    state.monitorStatus = await res.json();
+  } catch {
+    state.monitorStatus = { hooks: false, otel: false, statusline: false };
   }
-
-  function permPills() {
-    const items = [];
-    for (const t of perms.coreTools || []) items.push(`<span class="wf-pill perm-core">${t.name}(${t.pattern})</span>`);
-    for (const w of perms.webAccess || []) items.push(`<span class="wf-pill perm-web">${w.type === 'search' ? 'WebSearch' : `WebFetch(${w.constraint})`}</span>`);
-    return items.length > 0 ? items.join(' ') : '<span class="wf-empty">No permissions</span>';
-  }
-
-  function mcpPills() {
-    const servers = c.mcpServers || [];
-    if (servers.length === 0) return '';
-    return servers.map((s) =>
-      `<span class="wf-pill perm-mcp">${s.name} (${s.tools.length})</span>`
-    ).join(' ');
-  }
-
-  function rulesList() {
-    if (rules.length === 0) return '<div class="wf-empty">No rules</div>';
-    return rules.slice(0, 8).map((r) => {
-      const badges = [];
-      if (r.alwaysApply) badges.push('<span class="wf-pill" style="background:rgba(52,211,153,0.15);color:var(--green)">always</span>');
-      const globs = r.globs.length > 0 ? r.globs.map((g) => `<span class="wf-pill" style="background:var(--bg-hover);color:var(--text-muted)">${g}</span>`).join(' ') : '';
-      return `<div class="wf-sidebar-item">
-        <span class="wf-dot" style="background:var(--green)"></span>
-        ${r.name.replace('.md', '')} ${badges.join('')} ${globs}
-      </div>`;
-    }).join('') + (rules.length > 8 ? `<div class="wf-sidebar-item wf-empty">+${rules.length - 8} more</div>` : '');
-  }
-
-  function skillAgentBranch() {
-    const skillItems = skills.slice(0, 6).map((s) => {
-      const badges = [];
-      if (s.userInvocable) badges.push('<span class="wf-pill" style="background:rgba(129,140,248,0.2);color:var(--accent)">invocable</span>');
-      if (s.symlink) badges.push('<span class="wf-pill" style="background:rgba(251,191,36,0.15);color:var(--yellow)">\u2192</span>');
-      return `<div class="wf-sidebar-item"><span class="wf-dot" style="background:var(--accent)"></span>${s.name} ${badges.join('')}</div>`;
-    }).join('') + (skills.length > 6 ? `<div class="wf-sidebar-item wf-empty">+${skills.length - 6} more</div>` : '');
-
-    const agentItems = agents.slice(0, 4).map((a) => {
-      const toolBadges = (a.tools || []).map((t) => `<span class="wf-pill" style="background:var(--bg-hover);color:var(--text-secondary)">${t}</span>`).join(' ');
-      return `<div class="wf-sidebar-item"><span class="wf-dot" style="background:var(--orange)"></span>${a.name} ${toolBadges}</div>`;
-    }).join('');
-
-    if (skills.length === 0 && agents.length === 0) return '';
-    return `<div class="wf-branch">
-      <div class="wf-branch-item">
-        <div class="wf-branch-item-title">Skills (${skills.length})</div>
-        ${skillItems || '<div class="wf-empty">None</div>'}
-      </div>
-      <div class="wf-branch-item">
-        <div class="wf-branch-item-title">Agents (${agents.length})</div>
-        ${agentItems || '<div class="wf-empty">None</div>'}
-      </div>
-    </div>`;
-  }
-
-  function envList() {
-    const entries = Object.entries(c.env || {});
-    if (entries.length === 0) return '';
-    return entries.map(([k, v]) =>
-      `<div class="wf-sidebar-item"><span class="wf-dot" style="background:var(--teal)"></span><span style="color:var(--accent)">${k}</span> = ${v}</div>`
-    ).join('');
-  }
-
-  el.innerHTML = `<div class="wf-pipeline">
-
-    ${stage('stage-prompt', '\u276F', 'User Prompt', 'User submits a prompt to Claude Code')}
-    ${arrow()}
-    ${stage('stage-hook', '\u26A1', 'UserPromptSubmit Hooks', '', hookList('UserPromptSubmit'))}
-    ${arrow()}
-    ${stage('stage-rules', '\u2713', 'Rules Applied', `${rules.length} rules loaded based on context`, rulesList())}
-    ${arrow()}
-    ${stage('stage-perm', '\u26BF', 'Environment & Permissions', '', `
-      <div class="wf-sidebar">${permPills()}</div>
-      ${mcpPills() ? `<div class="wf-sidebar" style="margin-top:4px">${mcpPills()}</div>` : ''}
-      ${envList() ? `<div class="wf-sidebar" style="margin-top:4px">${envList()}</div>` : ''}
-    `)}
-    ${arrow()}
-    ${stage('stage-tool', '\u2692', 'Tool Use', 'Claude decides which tool to use (Bash, Edit, Read, Write, Agent...)', `
-      <div class="wf-sidebar">
-        ${hookList('PreToolUse') !== '<div class="wf-empty">No hooks</div>'
-          ? `<div style="margin-bottom:4px;font-size:10px;color:var(--text-muted);text-transform:uppercase;font-weight:600">PreToolUse Hooks</div>${hookList('PreToolUse')}`
-          : ''}
-      </div>
-    `)}
-    ${arrow()}
-    ${stage('stage-tool', '\u25B6', 'Execute Tool', 'Tool runs with permission checks applied')}
-    ${arrow()}
-    ${stage('stage-hook', '\u26A1', 'PostToolUse Hooks', 'Auto-lint, format, validation after tool execution', hookList('PostToolUse'))}
-    ${arrow()}
-    ${stage('stage-agent', '\u2726', 'Sub-Agent / Skill', 'Claude may spawn sub-agents or invoke skills', `
-      ${hookList('SubagentStart') !== '<div class="wf-empty">No hooks</div>'
-        ? `<div class="wf-sidebar"><div style="margin-bottom:4px;font-size:10px;color:var(--text-muted);text-transform:uppercase;font-weight:600">SubagentStart Hooks</div>${hookList('SubagentStart')}</div>` : ''}
-      ${skillAgentBranch()}
-      ${hookList('SubagentStop') !== '<div class="wf-empty">No hooks</div>'
-        ? `<div class="wf-sidebar" style="margin-top:6px"><div style="margin-bottom:4px;font-size:10px;color:var(--text-muted);text-transform:uppercase;font-weight:600">SubagentStop Hooks</div>${hookList('SubagentStop')}</div>` : ''}
-    `)}
-    ${arrow()}
-    ${stage('stage-end', '\u25A0', 'Stop / Session End', 'Session completes or is interrupted', `
-      <div class="wf-sidebar">
-        ${hookList('Stop')}
-        ${hookList('SessionEnd') !== '<div class="wf-empty">No hooks</div>'
-          ? `<div style="margin-top:4px">${hookList('SessionEnd')}</div>` : ''}
-      </div>
-    `)}
-
-  </div>`;
 }
 
-function stage(cls, icon, title, desc, sidebar) {
-  return `<div class="wf-stage ${cls}">
-    <div class="wf-stage-header">
-      <div class="wf-stage-icon">${icon}</div>
-      <div class="wf-stage-title">${title}</div>
+function monitorComponentRow(key, label, desc, installed, isCodexProvider) {
+  // Codex doesn't support statusline
+  if (key === 'statusline' && isCodexProvider) return '';
+  const badge = installed
+    ? '<span class="hook-status-badge installed">ON</span>'
+    : '<span class="hook-status-badge not-installed">OFF</span>';
+  const btn = installed
+    ? `<button class="btn-sm btn-uninstall" data-action="uninstall" data-component="${key}">Uninstall</button>`
+    : `<button class="btn-sm btn-install" data-action="install" data-component="${key}">Install</button>`;
+  return `<div class="settings-component">
+    <div class="settings-component-header">
+      <span class="settings-component-name">${label}</span>
+      ${badge}
     </div>
-    ${desc ? `<div class="wf-stage-desc">${desc}</div>` : ''}
-    ${sidebar ? `<div class="wf-sidebar">${sidebar}</div>` : ''}
+    <div class="settings-component-desc">${desc}</div>
+    <div class="settings-component-actions">${btn}</div>
   </div>`;
 }
 
-function arrow() {
-  return '<div class="wf-arrow">\u25BC</div>';
+async function renderSettings() {
+  const el = document.getElementById('settings');
+  if (!el) return;
+
+  await fetchMonitorStatus();
+  const c = state.config;
+  const projectPath = c?.projectRoot || '';
+  const providerName = state.provider?.displayName || 'Unknown';
+  const s = state.monitorStatus || {};
+  const isCodexProvider = isCodex();
+
+  el.innerHTML = `
+    <div class="settings-page">
+      <div class="settings-group">
+        <div class="settings-group-title">Project</div>
+        <div class="settings-group-body">
+          <div class="settings-field">
+            <label class="settings-label">Project Path</label>
+            <div class="settings-input-row">
+              <input type="text" id="settingsProjectInput" class="settings-input" value="${projectPath}" placeholder="/path/to/project" spellcheck="false">
+              <button id="settingsProjectBtn" class="btn-sm btn-install">Switch</button>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Provider</label>
+            <span class="settings-value">${providerName}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">Monitor Components</div>
+        <div class="settings-components" id="settingsComponents">
+          ${monitorComponentRow('hooks', 'HTTP Hooks',
+            `${HOOK_EVENTS_COUNT} event types \u2014 hook event POST to monitor server`,
+            s.hooks, isCodexProvider)}
+          ${monitorComponentRow('otel', 'OpenTelemetry',
+            'OTLP HTTP/JSON export \u2014 API latency, cost, tool stats',
+            s.otel, isCodexProvider)}
+          ${monitorComponentRow('statusline', 'Statusline',
+            'Realtime usage script \u2014 model, cost, context, rate limits',
+            s.statusline, isCodexProvider)}
+        </div>
+        <div class="settings-bulk-actions">
+          <button id="settingsInstallAll" class="btn-sm btn-install">Install All</button>
+          <button id="settingsUninstallAll" class="btn-sm btn-uninstall">Uninstall All</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Project switch
+  const projectInput = document.getElementById('settingsProjectInput');
+  const projectBtn = document.getElementById('settingsProjectBtn');
+  projectBtn.addEventListener('click', () => {
+    const val = projectInput.value.trim();
+    if (val) switchProject(val);
+  });
+  projectInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const val = projectInput.value.trim();
+      if (val) switchProject(val);
+    }
+  });
+
+  // Per-component install/uninstall
+  el.querySelectorAll('[data-action]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.action;
+      const component = btn.dataset.component;
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = action === 'install' ? 'Installing...' : 'Removing...';
+      try {
+        const options = { hooks: false, otel: false, statusline: false };
+        options[component] = true;
+        const endpoint = action === 'install' ? '/api/hooks/install' : '/api/hooks/uninstall';
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(options),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(data.error);
+        }
+      } catch (err) {
+        alert(err.message);
+      }
+      await fetchConfig();
+      await renderSettings();
+    });
+  });
+
+  // Bulk actions
+  document.getElementById('settingsInstallAll').addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/hooks/install', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hooks: true, otel: true, statusline: true }),
+      });
+      if (!res.ok) { const d = await res.json(); alert(d.error); }
+    } catch (err) { alert(err.message); }
+    await fetchConfig();
+    await renderSettings();
+  });
+
+  document.getElementById('settingsUninstallAll').addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/hooks/uninstall', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hooks: true, otel: true, statusline: true }),
+      });
+      if (!res.ok) { const d = await res.json(); alert(d.error); }
+    } catch (err) { alert(err.message); }
+    await fetchConfig();
+    await renderSettings();
+  });
 }
+
+const HOOK_EVENTS_COUNT = 11;
+
+// ============================================================
 
 // ============================================================
 // Token Usage
@@ -790,19 +1005,106 @@ function arrow() {
 
 async function fetchTokenUsage() {
   try {
-    const res = await fetch('/api/tokens');
+    const params = new URLSearchParams();
+    const { from, to } = state.tokenFilter;
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const qs = params.toString();
+    const res = await fetch('/api/tokens' + (qs ? '?' + qs : ''));
     state.tokens = await res.json();
     renderTokenUsage();
+    renderSessions();
   } catch {
     state.tokens = null;
   }
 }
 
+async function fetchUsage() {
+  try {
+    const res = await fetch('/api/usage');
+    state.usage = await res.json();
+    renderLiveUsage();
+    renderTokenUsage();
+  } catch {
+    state.usage = [];
+  }
+}
+
+async function fetchMetrics() {
+  try {
+    const res = await fetch('/api/metrics');
+    state.metrics = await res.json();
+    renderTokenUsage();
+  } catch {
+    state.metrics = null;
+  }
+}
+
+function renderDateFilter() {
+  const { preset, from, to } = state.tokenFilter;
+  const presets = [
+    { key: 'all', label: 'All Time' },
+    { key: 'today', label: 'Today' },
+    { key: '7d', label: '7 Days' },
+    { key: '30d', label: '30 Days' },
+    { key: 'custom', label: 'Custom' },
+  ];
+  const buttons = presets.map(p =>
+    `<button class="date-preset-btn ${preset === p.key ? 'active' : ''}" data-preset="${p.key}">${p.label}</button>`
+  ).join('');
+
+  const startVal = from ? from.slice(0, 10) : '';
+  const endVal = to ? to.slice(0, 10) : '';
+  const customInputs = preset === 'custom' ? `
+    <div class="date-custom-inputs">
+      <input type="date" class="date-filter-input" data-field="from" value="${startVal}" />
+      <span class="date-separator">~</span>
+      <input type="date" class="date-filter-input" data-field="to" value="${endVal}" />
+    </div>` : '';
+
+  return `<div class="date-filter-bar">${buttons}${customInputs}</div>`;
+}
+
+function applyDatePreset(preset) {
+  const today = new Date().toISOString().slice(0, 10);
+  const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+
+  state.tokenFilter.preset = preset;
+  if (preset === 'all') {
+    state.tokenFilter.from = null;
+    state.tokenFilter.to = null;
+  } else if (preset === 'today') {
+    state.tokenFilter.from = today + 'T00:00:00.000Z';
+    state.tokenFilter.to = today + 'T23:59:59.999Z';
+  } else if (preset === '7d') {
+    state.tokenFilter.from = daysAgo(7) + 'T00:00:00.000Z';
+    state.tokenFilter.to = null;
+  } else if (preset === '30d') {
+    state.tokenFilter.from = daysAgo(30) + 'T00:00:00.000Z';
+    state.tokenFilter.to = null;
+  }
+  // 'custom' keeps existing values
+  fetchTokenUsage();
+}
+
 function renderTokenUsage() {
   const el = document.getElementById('tokenUsage');
   const t = state.tokens;
-  if (!t || t.messageCount === 0) {
-    el.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
+  const filterHTML = renderDateFilter();
+
+  if (!t) {
+    el.innerHTML = filterHTML + '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
+    return;
+  }
+
+  const hasOtel = t.realtimeLatency && t.realtimeLatency.count > 0;
+  if (t.messageCount === 0 && !hasOtel) {
+    el.innerHTML = filterHTML + '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
+    return;
+  }
+
+  if (t.messageCount === 0) {
+    el.innerHTML = filterHTML + renderRealtimeMetrics(t);
     return;
   }
 
@@ -860,9 +1162,200 @@ function renderTokenUsage() {
     </div>`;
   }).join('');
 
-  el.innerHTML = cardsHTML + barHTML +
+  const realtimeHTML = renderRealtimeMetrics(t);
+
+  el.innerHTML = filterHTML + cardsHTML + barHTML + realtimeHTML +
     (modelsHTML ? `<div class="config-section" style="margin-top:10px"><h3>By Model</h3>${modelsHTML}</div>` : '') +
     (sessionsHTML ? `<div class="config-section" style="margin-top:10px"><h3>By Session (${t.sessions.length})</h3>${sessionsHTML}</div>` : '');
+}
+
+function renderLiveUsage() {
+  renderRateLimits();
+  renderSessions();
+}
+
+function renderRateLimits() {
+  const el = document.getElementById('rateLimits');
+  if (!el) return;
+  const entries = state.usage || [];
+  if (entries.length === 0) { el.innerHTML = ''; return; }
+
+  // Aggregate rate limits from all sessions (use most recent)
+  const latest = entries[0];
+  const rl = latest?.rate_limits || {};
+  const rl5h = rl.five_hour;
+  const rl7d = rl.seven_day;
+  if (!rl5h && !rl7d) { el.innerHTML = ''; return; }
+
+  const gauges = [];
+  if (rl5h) {
+    const pct5 = rl5h.used_percentage ?? 0;
+    const color5 = pct5 > 80 ? 'var(--red)' : pct5 > 50 ? 'var(--yellow)' : 'var(--accent)';
+    const reset5 = rl5h.resets_at ? formatTimeUntil(rl5h.resets_at * 1000) : '';
+    gauges.push(`<div class="usage-rl-row">
+      <span class="usage-rl-label">5h</span>
+      <div class="usage-gauge-track"><div class="usage-gauge-fill" style="width:${Math.min(pct5, 100)}%;background:${color5}"></div></div>
+      <span class="usage-rl-pct">${pct5.toFixed(1)}%</span>
+      ${reset5 ? `<span class="usage-rl-reset">resets ${reset5}</span>` : ''}
+    </div>`);
+  }
+  if (rl7d) {
+    const pct7 = rl7d.used_percentage ?? 0;
+    const color7 = pct7 > 80 ? 'var(--red)' : pct7 > 50 ? 'var(--yellow)' : 'var(--accent)';
+    const reset7 = rl7d.resets_at ? formatTimeUntil(rl7d.resets_at * 1000) : '';
+    gauges.push(`<div class="usage-rl-row">
+      <span class="usage-rl-label">7d</span>
+      <div class="usage-gauge-track"><div class="usage-gauge-fill" style="width:${Math.min(pct7, 100)}%;background:${color7}"></div></div>
+      <span class="usage-rl-pct">${pct7.toFixed(1)}%</span>
+      ${reset7 ? `<span class="usage-rl-reset">resets ${reset7}</span>` : ''}
+    </div>`);
+  }
+
+  el.innerHTML = `<div class="usage-subsection" style="margin-bottom:12px">
+    <div class="panel-title">Rate Limits</div>
+    ${gauges.join('')}
+  </div>`;
+}
+
+function getUsageForSession(sessionId) {
+  if (!sessionId || !state.usage) return null;
+  return state.usage.find((u) => u.session_id === sessionId) || null;
+}
+
+function formatTimeUntil(targetMs) {
+  const diff = targetMs - Date.now();
+  if (diff <= 0) return 'now';
+  const m = Math.floor(diff / 60000);
+  if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h ${m % 60}m`;
+  return `in ${Math.floor(h / 24)}d`;
+}
+
+function renderRealtimeMetrics(t) {
+  const m = state.metrics;
+  const lat = t.realtimeLatency;
+  const hasLatency = lat && lat.count > 0;
+  const hasMetrics = m && (hasLatency || Object.keys(m.modelBreakdown || {}).length > 0 || Object.keys(m.toolStats || {}).length > 0 || (m.errorRate?.total || 0) > 0);
+
+  if (!hasMetrics) return '';
+
+  // --- Latency bars ---
+  let latencyHTML = '';
+  if (hasLatency) {
+    latencyHTML = `<div class="rt-card">
+      <div class="rt-card-title">API Latency</div>
+      <div class="rt-latency-bars">
+        <div class="rt-bar-group">
+          <div class="rt-bar-label">p50</div>
+          <div class="rt-bar-track"><div class="rt-bar-fill rt-p50" style="width:${barWidth(lat.p50, lat.p99)}%"></div></div>
+          <div class="rt-bar-value">${fmtMs(lat.p50)}</div>
+        </div>
+        <div class="rt-bar-group">
+          <div class="rt-bar-label">p95</div>
+          <div class="rt-bar-track"><div class="rt-bar-fill rt-p95" style="width:${barWidth(lat.p95, lat.p99)}%"></div></div>
+          <div class="rt-bar-value">${fmtMs(lat.p95)}</div>
+        </div>
+        <div class="rt-bar-group">
+          <div class="rt-bar-label">p99</div>
+          <div class="rt-bar-track"><div class="rt-bar-fill rt-p99" style="width:100%"></div></div>
+          <div class="rt-bar-value">${fmtMs(lat.p99)}</div>
+        </div>
+      </div>
+      <div class="rt-latency-summary">${lat.count} calls, avg ${fmtMs(lat.avg)}</div>
+    </div>`;
+  }
+
+  // --- Cost/min chart ---
+  const timeline = t.realtime || [];
+  let costChartHTML = '';
+  if (timeline.length > 0) {
+    const maxCost = Math.max(...timeline.map((b) => b.cost), 0.001);
+    const bars = timeline.slice(-30).map((b) => {
+      const h = Math.max(2, (b.cost / maxCost) * 40);
+      const time = new Date(b.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      return `<div class="rt-cost-bar" title="${time}: $${b.cost.toFixed(4)}" style="height:${h}px"></div>`;
+    }).join('');
+    costChartHTML = `<div class="rt-card">
+      <div class="rt-card-title">Cost / min</div>
+      <div class="rt-cost-bars">${bars}</div>
+      <div class="rt-cost-label">last ${timeline.length} min</div>
+    </div>`;
+  }
+
+  // --- Model breakdown ---
+  const models = m?.modelBreakdown || {};
+  let modelHTML = '';
+  if (Object.keys(models).length > 0) {
+    const rows = Object.entries(models).map(([name, d]) => {
+      const shortName = name.replace(/^claude-/, '').replace(/^gpt-/, '');
+      return `<div class="rt-table-row">
+        <span class="rt-table-name">${shortName}</span>
+        <span class="rt-table-stat">${d.calls} calls</span>
+        <span class="rt-table-stat">${fmtMs(d.avgLatency)} avg</span>
+        <span class="rt-table-stat">${fmtNum(d.totalTokens)} tok</span>
+        <span class="rt-table-cost">$${d.totalCost.toFixed(4)}</span>
+      </div>`;
+    }).join('');
+    modelHTML = `<div class="rt-card">
+      <div class="rt-card-title">Model Breakdown</div>
+      ${rows}
+    </div>`;
+  }
+
+  // --- Tool stats ---
+  const tools = m?.toolStats || {};
+  let toolHTML = '';
+  if (Object.keys(tools).length > 0) {
+    const rows = Object.entries(tools)
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 10)
+      .map(([name, d]) => {
+        const errPct = (d.errorRate * 100).toFixed(0);
+        const errClass = d.errorRate > 0.1 ? ' rt-err-high' : (d.errorRate > 0 ? ' rt-err-warn' : '');
+        return `<div class="rt-table-row">
+          <span class="rt-table-name">${name}</span>
+          <span class="rt-table-stat">${d.count}x</span>
+          <span class="rt-table-stat">${fmtMs(d.avg)} avg</span>
+          <span class="rt-table-stat">${fmtMs(d.p95)} p95</span>
+          <span class="rt-table-stat${errClass}">${errPct}% err</span>
+        </div>`;
+      }).join('');
+    toolHTML = `<div class="rt-card">
+      <div class="rt-card-title">Tool Performance</div>
+      ${rows}
+    </div>`;
+  }
+
+  // --- Error rate ---
+  const errors = m?.errorRate || {};
+  let errorHTML = '';
+  if (errors.total > 0) {
+    const rows = Object.entries(errors.byType)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => `<div class="rt-table-row">
+        <span class="rt-table-name rt-err-type">${type}</span>
+        <span class="rt-table-stat">${count}x</span>
+      </div>`).join('');
+    errorHTML = `<div class="rt-card rt-card-error">
+      <div class="rt-card-title">API Errors <span class="rt-err-badge">${errors.total}</span></div>
+      ${rows}
+    </div>`;
+  }
+
+  return `<div class="config-section" style="margin-top:10px">
+    <h3>Realtime API Metrics <span class="rt-badge">OTel</span></h3>
+    <div class="rt-dashboard">${latencyHTML}${costChartHTML}${modelHTML}${toolHTML}${errorHTML}</div>
+  </div>`;
+}
+
+function fmtMs(ms) {
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+  return Math.round(ms) + 'ms';
+}
+
+function barWidth(value, max) {
+  return max > 0 ? Math.round((value / max) * 100) : 0;
 }
 
 function fmtNum(n) {
@@ -913,8 +1406,8 @@ function navigateTo(pageName) {
   if (page) page.classList.add('active');
   if (nav) nav.classList.add('active');
 
-  if (pageName === 'workflow' && state.config) {
-    renderWorkflow();
+  if (pageName === 'settings') {
+    renderSettings();
   }
 }
 
@@ -922,17 +1415,40 @@ function navigateTo(pageName) {
 // Init
 // ============================================================
 
+async function fetchProvider() {
+  try {
+    const res = await fetch('/api/provider');
+    state.provider = await res.json();
+  } catch { /* ignore */ }
+}
+
+function isCodex() {
+  return state.provider?.name === 'codex';
+}
+
 async function init() {
+  await fetchProvider();
   await fetchConfig();
   await fetchSessions();
   await fetchRecentEvents();
   await fetchTokenUsage();
+  await fetchMetrics();
+  await fetchUsage();
   connectSSE();
 
   setInterval(fetchSessions, 5000);
   setInterval(fetchTokenUsage, 30000);
+  setInterval(fetchMetrics, 15000);
+  setInterval(fetchUsage, 10000);
 
   initModalHandlers();
+
+  // Tool events toggle
+  document.getElementById('toggleToolEvents').addEventListener('click', (e) => {
+    state.showToolEvents = !state.showToolEvents;
+    e.target.textContent = state.showToolEvents ? 'Hide tool events' : 'Show tool events';
+    renderFeed();
+  });
 
   // SNB navigation
   document.querySelectorAll('.snb-item').forEach((item) => {
@@ -942,19 +1458,22 @@ async function init() {
     });
   });
 
-  // Project switch
-  const projectInput = document.getElementById('projectInput');
-  const projectBtn = document.getElementById('projectBtn');
-  projectBtn.addEventListener('click', () => {
-    const val = projectInput.value.trim();
-    if (val) switchProject(val);
+  // Date filter event delegation
+  document.getElementById('tokenUsage').addEventListener('click', (e) => {
+    const btn = e.target.closest('.date-preset-btn');
+    if (btn) applyDatePreset(btn.dataset.preset);
   });
-  projectInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const val = projectInput.value.trim();
-      if (val) switchProject(val);
+  document.getElementById('tokenUsage').addEventListener('change', (e) => {
+    if (e.target.classList.contains('date-filter-input')) {
+      state.tokenFilter.preset = 'custom';
+      const fromInput = document.querySelector('.date-filter-input[data-field="from"]');
+      const toInput = document.querySelector('.date-filter-input[data-field="to"]');
+      state.tokenFilter.from = fromInput?.value ? fromInput.value + 'T00:00:00.000Z' : null;
+      state.tokenFilter.to = toInput?.value ? toInput.value + 'T23:59:59.999Z' : null;
+      fetchTokenUsage();
     }
   });
+
 }
 
 init();
