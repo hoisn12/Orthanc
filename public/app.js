@@ -16,6 +16,7 @@ const state = {
   showToolEvents: false, // toggle for pre/post-tool-use in feed
   currentTool: null, // { toolName, detail, pid, timestamp } — currently running tool
   tokenFilter: { preset: 'all', from: null, to: null },
+  sessionConfig: null, // per-session config when a session is selected
 };
 
 // --- Project switch ---
@@ -359,16 +360,116 @@ function renderSessions() {
 
 function setSessionFilter(pid) {
   state.filterPid = pid;
+  state.sessionConfig = null;
   renderSessions();
   renderFilterBanner();
   renderFeed();
+  renderSessionConfig();
+  fetchSessionConfig(pid);
 }
 
 function clearSessionFilter() {
   state.filterPid = null;
+  state.sessionConfig = null;
   renderSessions();
   renderFilterBanner();
   renderFeed();
+  renderSessionConfig();
+}
+
+async function fetchSessionConfig(pid) {
+  try {
+    const res = await fetch(`/api/sessions/${pid}/config`);
+    if (!res.ok) return;
+    const config = await res.json();
+    if (state.filterPid === pid) {
+      state.sessionConfig = config;
+      renderSessionConfig();
+    }
+  } catch { /* ignore */ }
+}
+
+function renderSessionConfig() {
+  const el = document.getElementById('sessionConfig');
+  if (!el) return;
+  if (!state.sessionConfig || !state.filterPid) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const cfg = state.sessionConfig;
+  let html = `<div class="panel-title" style="margin-top:14px">Session Config <span style="color:var(--text-muted);font-size:11px">${cfg.projectName || ''}</span></div>`;
+
+  // CLAUDE.md files
+  const mdFiles = cfg.claudeMdFiles || [];
+  if (mdFiles.length > 0) {
+    html += `<div class="sc-section"><div class="sc-label">CLAUDE.md</div>`;
+    for (const md of mdFiles) {
+      const levelBadge = `<span class="sc-badge sc-badge-${md.level}">${md.level}</span>`;
+      html += `<div class="sc-card" data-file="${md.path}">
+        ${levelBadge} <span class="sc-card-name">${shortenPath(md.path)}</span>
+        ${md.preview ? `<span class="sc-card-desc">${md.preview}</span>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Skills
+  const skills = (cfg.skills || []).filter((s) => s.active);
+  if (skills.length > 0) {
+    html += `<div class="sc-section"><div class="sc-label">Skills <span class="sc-count">${skills.length}</span></div>`;
+    for (const sk of skills) {
+      const badges = [];
+      if (sk.userInvocable) badges.push('<span class="sc-badge sc-badge-invoke">invocable</span>');
+      if (sk.symlink) badges.push('<span class="sc-badge sc-badge-symlink">symlink</span>');
+      html += `<div class="sc-card"${sk.filePath ? ` data-file="${sk.filePath}"` : ''}>
+        <span class="sc-card-name">${sk.name}</span> ${badges.join(' ')}
+        ${sk.description ? `<span class="sc-card-desc">${sk.description}</span>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Rules
+  const rules = cfg.rules || [];
+  if (rules.length > 0) {
+    html += `<div class="sc-section"><div class="sc-label">Rules <span class="sc-count">${rules.length}</span></div>`;
+    for (const r of rules) {
+      const badges = [];
+      if (r.alwaysApply) badges.push('<span class="sc-badge sc-badge-always">always</span>');
+      if (r.globs.length > 0) badges.push(...r.globs.map((g) => `<span class="sc-badge sc-badge-glob">${g}</span>`));
+      html += `<div class="sc-card"${r.filePath ? ` data-file="${r.filePath}"` : ''}>
+        <span class="sc-card-name">${r.name}</span> ${badges.join(' ')}
+        ${r.summary ? `<span class="sc-card-desc">${r.summary}</span>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Agents
+  const agents = cfg.agents || [];
+  if (agents.length > 0) {
+    html += `<div class="sc-section"><div class="sc-label">Agents <span class="sc-count">${agents.length}</span></div>`;
+    for (const a of agents) {
+      html += `<div class="sc-card"${a.filePath ? ` data-file="${a.filePath}"` : ''}>
+        <span class="sc-card-name">${a.name}</span>
+        ${a.description ? `<span class="sc-card-desc">${a.description}</span>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (mdFiles.length === 0 && skills.length === 0 && rules.length === 0 && agents.length === 0) {
+    html += '<span style="color:var(--text-muted);font-size:12px">No config found for this session\'s project</span>';
+  }
+
+  el.innerHTML = html;
+
+  // Click to open file viewer
+  el.querySelectorAll('.sc-card[data-file]').forEach((card) => {
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', () => openFileViewer(card.dataset.file));
+  });
 }
 
 function renderFilterBanner() {

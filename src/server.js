@@ -7,7 +7,7 @@ import { parseProjectConfig } from './config-parser.js';
 import { SessionWatcher } from './session-watcher.js';
 import { installHooks, uninstallHooks } from './hook-installer.js';
 import { getTokenUsage } from './token-tracker.js';
-import { listProviders } from './providers/registry.js';
+import { detectProvider, listProviders } from './providers/registry.js';
 import { MetricsStore } from './metrics-store.js';
 import { OtelReceiver } from './otel-receiver.js';
 import { getDb, closeDb } from './db.js';
@@ -17,7 +17,7 @@ import { JsonlWatcher } from './jsonl-watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createServer({ projectRoot, port = 7432, provider }) {
+export function createServer({ projectRoot, port = 7432, provider: initialProvider }) {
   const app = express();
   const db = getDb();
   const eventStore = new EventStore(2000);
@@ -33,6 +33,7 @@ export function createServer({ projectRoot, port = 7432, provider }) {
     'SELECT * FROM usage ORDER BY received_at DESC'
   );
   let currentProject = projectRoot;
+  let provider = initialProvider;
   const sessionWatcher = new SessionWatcher(provider, currentProject, 5000);
 
   app.use(express.json());
@@ -71,6 +72,9 @@ export function createServer({ projectRoot, port = 7432, provider }) {
     }
     const resolved = path.resolve(projectPath);
     currentProject = resolved;
+    // Re-detect provider based on the new project directory
+    provider = detectProvider({ projectRoot: resolved });
+    sessionWatcher.provider = provider;
     sessionWatcher.setProjectFilter(resolved);
     jsonlWatcher.setProjectRoot(resolved);
     try {
@@ -86,6 +90,20 @@ export function createServer({ projectRoot, port = 7432, provider }) {
 
   app.get('/api/sessions', (_req, res) => {
     res.json(sessionWatcher.getSessions());
+  });
+
+  app.get('/api/sessions/:pid/config', (req, res) => {
+    const pid = parseInt(req.params.pid);
+    const session = sessionWatcher.getSessions().find((s) => s.pid === pid);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    try {
+      const config = parseProjectConfig(provider, session.cwd);
+      config.projectRoot = session.cwd;
+      config.projectName = path.basename(session.cwd);
+      res.json(config);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/events', (req, res) => {

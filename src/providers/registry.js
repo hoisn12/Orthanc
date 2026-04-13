@@ -40,23 +40,29 @@ export function detectProvider({ provider, projectRoot } = {}) {
 
   const root = projectRoot || process.cwd();
 
-  // 2. Project has .codex/
-  if (fs.existsSync(path.join(root, '.codex'))) {
-    return new CodexProvider();
-  }
-
-  // 3. Project has .claude/
+  // 2. Project has .claude/ (default provider — checked first)
   if (fs.existsSync(path.join(root, '.claude'))) {
     return new ClaudeProvider();
   }
 
-  // 4. Active codex sessions
+  // 3. Project has .codex/
+  if (fs.existsSync(path.join(root, '.codex'))) {
+    return new CodexProvider();
+  }
+
+  // 4. Active sessions — check both, prefer claude when tied
+  const claudeSessions = path.join(os.homedir(), '.claude', 'sessions');
   const codexSessions = path.join(os.homedir(), '.codex', 'sessions');
-  if (fs.existsSync(codexSessions)) {
-    try {
-      const files = fs.readdirSync(codexSessions);
-      if (files.length > 0) return new CodexProvider();
-    } catch { /* ignore */ }
+  const claudeActive = hasActiveSessionFiles(claudeSessions);
+  const codexActive = hasActiveSessionFiles(codexSessions);
+
+  if (claudeActive && !codexActive) return new ClaudeProvider();
+  if (codexActive && !claudeActive) return new CodexProvider();
+  if (claudeActive && codexActive) {
+    const claudeMtime = latestMtime(claudeSessions);
+    const codexMtime = latestMtime(codexSessions);
+    // Prefer claude when tied
+    return codexMtime > claudeMtime ? new CodexProvider() : new ClaudeProvider();
   }
 
   // 5. Default
@@ -66,4 +72,22 @@ export function detectProvider({ provider, projectRoot } = {}) {
 /** List all available provider names */
 export function listProviders() {
   return Object.keys(providers);
+}
+
+function hasActiveSessionFiles(dir) {
+  try {
+    const files = fs.readdirSync(dir);
+    return files.length > 0;
+  } catch { return false; }
+}
+
+function latestMtime(dir) {
+  try {
+    let latest = 0;
+    for (const f of fs.readdirSync(dir)) {
+      const st = fs.statSync(path.join(dir, f));
+      if (st.mtimeMs > latest) latest = st.mtimeMs;
+    }
+    return latest;
+  } catch { return 0; }
 }
