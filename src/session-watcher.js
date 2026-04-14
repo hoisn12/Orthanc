@@ -36,7 +36,7 @@ export class SessionWatcher {
         const pid = data.pid;
         currentPids.add(pid);
 
-        if (this.projectFilter && data.cwd !== this.projectFilter) continue;
+        if (this.projectFilter && !isSubpath(data.cwd, this.projectFilter)) continue;
 
         const alive = isProcessAlive(pid);
         if (!alive) continue;
@@ -94,6 +94,12 @@ export class SessionWatcher {
     }
     return best;
   }
+}
+
+function isSubpath(child, parent) {
+  const normalizedChild = child.endsWith('/') ? child : child + '/';
+  const normalizedParent = parent.endsWith('/') ? parent : parent + '/';
+  return normalizedChild === normalizedParent || normalizedChild.startsWith(normalizedParent);
 }
 
 function isProcessAlive(pid) {
