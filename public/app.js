@@ -1512,7 +1512,7 @@ function renderRateLimits() {
       <span class="usage-rl-label">5h</span>
       <div class="usage-gauge-track"><div class="usage-gauge-fill" style="width:${Math.min(pct5, 100)}%;background:${color5}"></div></div>
       <span class="usage-rl-pct">${pct5.toFixed(1)}%</span>
-      ${reset5 ? `<span class="usage-rl-reset">resets ${reset5}</span>` : ''}
+      <span class="usage-rl-reset">${reset5 ? `resets ${reset5}` : ''}</span>
     </div>`);
   }
   if (rl7d) {
@@ -1523,7 +1523,7 @@ function renderRateLimits() {
       <span class="usage-rl-label">7d</span>
       <div class="usage-gauge-track"><div class="usage-gauge-fill" style="width:${Math.min(pct7, 100)}%;background:${color7}"></div></div>
       <span class="usage-rl-pct">${pct7.toFixed(1)}%</span>
-      ${reset7 ? `<span class="usage-rl-reset">resets ${reset7}</span>` : ''}
+      <span class="usage-rl-reset">${reset7 ? `resets ${reset7}` : ''}</span>
     </div>`);
   }
 
