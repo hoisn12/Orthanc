@@ -1,7 +1,15 @@
 import path from 'node:path';
+import type { Provider } from './providers/provider.js';
+import type { SessionInfo } from './types.js';
 
 export class SessionWatcher {
-  constructor(provider, projectFilter = null, pollInterval = 5000) {
+  provider: Provider;
+  projectFilter: string | null;
+  pollInterval: number;
+  sessions: Map<number, SessionInfo>;
+  timer: ReturnType<typeof setInterval> | null;
+
+  constructor(provider: Provider, projectFilter: string | null = null, pollInterval = 5000) {
     this.provider = provider;
     this.projectFilter = projectFilter ? path.resolve(projectFilter) : null;
     this.pollInterval = pollInterval;
@@ -9,24 +17,24 @@ export class SessionWatcher {
     this.timer = null;
   }
 
-  start() {
+  start(): void {
     this.poll();
     this.timer = setInterval(() => this.poll(), this.pollInterval);
   }
 
-  stop() {
+  stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
   }
 
-  poll() {
+  poll(): void {
     const files = this.provider.listSessionFiles();
     if (files.length === 0) return;
 
     const sessionsDir = this.provider.getSessionsDir();
-    const currentPids = new Set();
+    const currentPids = new Set<number>();
 
     for (const file of files) {
       try {
@@ -60,33 +68,32 @@ export class SessionWatcher {
     }
 
     // remove dead sessions (file removed or process not alive)
-    for (const [pid, session] of this.sessions) {
+    for (const [pid] of this.sessions) {
       if (!currentPids.has(pid) || !isProcessAlive(pid)) {
         this.sessions.delete(pid);
       }
     }
   }
 
-  setProjectFilter(projectPath) {
+  setProjectFilter(projectPath: string | null): void {
     this.projectFilter = projectPath ? path.resolve(projectPath) : null;
     this.sessions.clear();
     this.poll();
   }
 
-  getSessions() {
-    return Array.from(this.sessions.values())
-      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  getSessions(): SessionInfo[] {
+    return Array.from(this.sessions.values()).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
   }
 
-  getBySessionId(sessionId) {
+  getBySessionId(sessionId: string): SessionInfo | null {
     for (const session of this.sessions.values()) {
       if (session.sessionId === sessionId) return session;
     }
     return null;
   }
 
-  getMostRecentAlive() {
-    let best = null;
+  getMostRecentAlive(): SessionInfo | null {
+    let best: SessionInfo | null = null;
     for (const session of this.sessions.values()) {
       if (session.alive && (!best || session.startedAt > best.startedAt)) {
         best = session;
@@ -96,13 +103,13 @@ export class SessionWatcher {
   }
 }
 
-function isSubpath(child, parent) {
+function isSubpath(child: string, parent: string): boolean {
   const normalizedChild = child.endsWith('/') ? child : child + '/';
   const normalizedParent = parent.endsWith('/') ? parent : parent + '/';
   return normalizedChild === normalizedParent || normalizedChild.startsWith(normalizedParent);
 }
 
-function isProcessAlive(pid) {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

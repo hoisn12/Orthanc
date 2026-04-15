@@ -1,3 +1,7 @@
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // State
 const state = {
   config: null,
@@ -35,10 +39,11 @@ async function switchProject(projectPath) {
     }
     state.config = await res.json();
     renderHarness();
-    const settingsInput = document.getElementById('settingsProjectInput');
-    if (settingsInput) settingsInput.value = state.config.projectRoot || '';
     await fetchSessions();
     await fetchTokenUsage();
+    if (document.getElementById('page-settings')?.classList.contains('active')) {
+      await renderSettings();
+    }
   } catch (err) {
     alert(`Failed to switch project: ${err.message}`);
   }
@@ -69,7 +74,10 @@ async function fetchRecentEvents() {
 
 function connectSSE() {
   const source = new EventSource('/api/events/stream');
-  source.onopen = () => { state.connected = true; updateStatus(); };
+  source.onopen = () => {
+    state.connected = true;
+    updateStatus();
+  };
   source.onmessage = (e) => {
     const event = JSON.parse(e.data);
     state.events.push(event);
@@ -121,14 +129,17 @@ function processEvent(event) {
         break;
       }
     }
-    state.events = state.events.filter((e, idx) =>
-      !(e.type === 'assistant-streaming' && e.pid === pid && idx >= turnStart)
+    state.events = state.events.filter(
+      (e, idx) => !(e.type === 'assistant-streaming' && e.pid === pid && idx >= turnStart),
     );
   }
 
   // Track current running tool (debounced clear to avoid flicker)
   if (type === 'pre-tool-use' || type === 'otel-tool-decision') {
-    if (state._clearToolTimer) { clearTimeout(state._clearToolTimer); state._clearToolTimer = null; }
+    if (state._clearToolTimer) {
+      clearTimeout(state._clearToolTimer);
+      state._clearToolTimer = null;
+    }
     state.currentTool = {
       toolName: payload.tool_name || payload['tool.name'] || 'unknown',
       detail: extractToolSummary(payload),
@@ -145,14 +156,20 @@ function processEvent(event) {
     }, 500);
   } else if (type === 'otel-api-request') {
     // API call in progress — show model as current activity
-    if (state._clearToolTimer) { clearTimeout(state._clearToolTimer); state._clearToolTimer = null; }
+    if (state._clearToolTimer) {
+      clearTimeout(state._clearToolTimer);
+      state._clearToolTimer = null;
+    }
     const model = payload.model || payload['gen_ai.request.model'] || '';
     if (model) {
       state.currentTool = { toolName: 'API', detail: model, pid, timestamp: event.timestamp };
       renderCurrentTool();
     }
   } else if (type === 'stop' || type === 'session-end') {
-    if (state._clearToolTimer) { clearTimeout(state._clearToolTimer); state._clearToolTimer = null; }
+    if (state._clearToolTimer) {
+      clearTimeout(state._clearToolTimer);
+      state._clearToolTimer = null;
+    }
     state.currentTool = null;
     if (pid) state.lastActivity.delete(pid);
     renderCurrentTool();
@@ -160,7 +177,10 @@ function processEvent(event) {
 
   // Track last activity per session (except stop/session-end already handled)
   if (pid && type !== 'stop' && type !== 'session-end') {
-    const rawDetail = extractDetail(event).replace(/<[^>]*>/g, '').replace(/[\r\n]+/g, ' ').trim();
+    const rawDetail = extractDetail(event)
+      .replace(/<[^>]*>/g, '')
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
     state.lastActivity.set(pid, { type, timestamp: event.timestamp, detail: rawDetail });
   }
 }
@@ -235,7 +255,8 @@ function renderSessions() {
   renderCurrentTool();
   const el = document.getElementById('sessions');
   if (state.sessions.length === 0) {
-    el.innerHTML = '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
+    el.innerHTML =
+      '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
     return;
   }
 
@@ -258,14 +279,19 @@ function renderSessions() {
 
     let agentsHTML = '';
     if (sessionAgents.length > 0) {
-      agentsHTML = `<div class="session-agents">${sessionAgents.slice().reverse().map((a) =>
-        `<div class="subagent-item">
+      agentsHTML = `<div class="session-agents">${sessionAgents
+        .slice()
+        .reverse()
+        .map(
+          (a) =>
+            `<div class="subagent-item">
           <span class="dot ${a.status}"></span>
           <span>${a.type}</span>
           <span style="color:var(--text-muted)">(${a.model})</span>
           <span style="color:var(--text-secondary)">${a.description}</span>
-        </div>`
-      ).join('')}</div>`;
+        </div>`,
+        )
+        .join('')}</div>`;
     }
 
     // Consider "working" if last hook/streaming activity within 60s, or statusline data is fresh (within 15s)
@@ -342,7 +368,8 @@ function renderSessions() {
     out += `<div class="panel-title" style="margin-top:${active.length > 0 ? '14px' : '0'}">Idle Sessions <span class="session-count">${idle.length}</span></div>${idle.join('')}`;
   }
   if (out === '') {
-    out = '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
+    out =
+      '<div class="panel-title">Active Sessions</div><span style="color:var(--text-muted);font-size:12px">No active sessions</span>';
   }
   el.innerHTML = out;
 
@@ -386,7 +413,9 @@ async function fetchSessionConfig(pid) {
       state.sessionConfig = config;
       renderSessionConfig();
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function renderSessionConfig() {
@@ -511,7 +540,11 @@ function renderFeedItem(event) {
 }
 
 function eventToHTML(event) {
-  const time = new Date(event.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = new Date(event.timestamp).toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
   const pidLabel = event.pid ? `<span class="event-pid">P${event.pid}</span>` : '';
   return `<div class="event-item">
     <span class="event-time">${time}</span>
@@ -564,7 +597,7 @@ function extractDetail(event) {
     return `<div class="event-assistant-msg event-md">${renderMd(p.last_assistant_message)}</div>`;
   }
   if (type === 'user-prompt-submit' && p.prompt) {
-    const msg = (typeof p.prompt === 'string' ? p.prompt : '');
+    const msg = typeof p.prompt === 'string' ? p.prompt : '';
     return `<div class="event-user-msg event-md">${renderMd(msg)}</div>`;
   }
   // Task events
@@ -586,10 +619,9 @@ function extractDetail(event) {
     return p.tool_name;
   }
   if (p.agent_type) return `${p.agent_type} (${p.agent_id || ''})`;
-  if (p.prompt) return (typeof p.prompt === 'string' ? p.prompt : '');
+  if (p.prompt) return typeof p.prompt === 'string' ? p.prompt : '';
   return '';
 }
-
 
 // ============================================================
 // File Viewer Modal
@@ -620,9 +652,104 @@ async function openFileViewer(filePath) {
 
 function initModalHandlers() {
   const modal = document.getElementById('fileModal');
-  document.getElementById('modalClose').addEventListener('click', () => { modal.style.display = 'none'; });
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') modal.style.display = 'none'; });
+  document.getElementById('modalClose').addEventListener('click', () => {
+    modal.style.display = 'none';
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const fp = document.getElementById('folderPickerModal');
+      if (fp && fp.style.display !== 'none') {
+        fp.style.display = 'none';
+        return;
+      }
+      modal.style.display = 'none';
+    }
+  });
+}
+
+// ============================================================
+// Folder Picker
+// ============================================================
+
+let _fpCurrentPath = '';
+let _fpParentPath = '';
+
+function openFolderPicker(initialPath) {
+  const modal = document.getElementById('folderPickerModal');
+  modal.style.display = 'flex';
+  document.getElementById('folderPickerPathInput').value = initialPath || '/';
+  loadDirectories(initialPath || '/');
+}
+
+function closeFolderPicker() {
+  document.getElementById('folderPickerModal').style.display = 'none';
+}
+
+async function loadDirectories(dirPath) {
+  const listEl = document.getElementById('folderPickerList');
+  const pathInput = document.getElementById('folderPickerPathInput');
+  const upBtn = document.getElementById('folderPickerUp');
+  listEl.innerHTML = '<div class="folder-picker-empty">Loading...</div>';
+  try {
+    const res = await fetch(`/api/directories?path=${encodeURIComponent(dirPath)}`);
+    if (!res.ok) {
+      const err = await res.json();
+      listEl.innerHTML = `<div class="folder-picker-empty">${escapeHtml(err.error || 'Failed to load')}</div>`;
+      return;
+    }
+    const data = await res.json();
+    _fpCurrentPath = data.path;
+    _fpParentPath = data.parent;
+    pathInput.value = data.path;
+    upBtn.disabled = data.path === data.parent;
+
+    if (data.directories.length === 0) {
+      listEl.innerHTML = '<div class="folder-picker-empty">No subdirectories</div>';
+      return;
+    }
+    listEl.innerHTML = data.directories
+      .map((name) => `<div class="folder-picker-item" data-name="${escapeHtml(name)}">${escapeHtml(name)}</div>`)
+      .join('');
+    listEl.querySelectorAll('.folder-picker-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        loadDirectories(_fpCurrentPath + '/' + item.dataset.name);
+      });
+    });
+  } catch (err) {
+    listEl.innerHTML = `<div class="folder-picker-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function initFolderPickerHandlers() {
+  const modal = document.getElementById('folderPickerModal');
+  const pathInput = document.getElementById('folderPickerPathInput');
+  document.getElementById('folderPickerClose').addEventListener('click', closeFolderPicker);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeFolderPicker();
+  });
+  document.getElementById('folderPickerUp').addEventListener('click', () => {
+    if (_fpParentPath) loadDirectories(_fpParentPath);
+  });
+  document.getElementById('folderPickerGo').addEventListener('click', () => {
+    const val = pathInput.value.trim();
+    if (val) loadDirectories(val);
+  });
+  pathInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const val = pathInput.value.trim();
+      if (val) loadDirectories(val);
+    }
+  });
+  document.getElementById('folderPickerSelect').addEventListener('click', async () => {
+    if (_fpCurrentPath) {
+      closeFolderPicker();
+      await switchProject(_fpCurrentPath);
+    }
+  });
+  document.getElementById('folderPickerCancel').addEventListener('click', closeFolderPicker);
 }
 
 // ============================================================
@@ -718,8 +845,11 @@ function harnessSection(title, content, collapsible = true) {
 
 function renderSummaryBar(c) {
   const hookCount = Object.keys(c.hooks || {}).length;
-  const permCount = (c.permissions?.coreTools?.length || 0) + (c.permissions?.mcpTools?.length || 0)
-    + (c.permissions?.webAccess?.length || 0) + (c.permissions?.skills?.length || 0);
+  const permCount =
+    (c.permissions?.coreTools?.length || 0) +
+    (c.permissions?.mcpTools?.length || 0) +
+    (c.permissions?.webAccess?.length || 0) +
+    (c.permissions?.skills?.length || 0);
   const mcpCount = (c.mcpServers || []).length;
   const mdCount = (c.claudeMdFiles || []).length;
 
@@ -740,28 +870,34 @@ function renderSummaryBar(c) {
         { value: mdCount, label: 'CLAUDE.md' },
       ];
 
-  return `<div class="harness-stats">${stats.map((s) =>
-    `<div class="harness-stat"><div class="stat-value">${s.value}</div><div class="stat-label">${s.label}</div></div>`
-  ).join('')}</div>`;
+  return `<div class="harness-stats">${stats
+    .map(
+      (s) =>
+        `<div class="harness-stat"><div class="stat-value">${s.value}</div><div class="stat-label">${s.label}</div></div>`,
+    )
+    .join('')}</div>`;
 }
 
 function renderSettingsLayers(c) {
   const layers = c.settingsLayers || [];
   if (layers.length === 0) return '<span style="color:var(--text-muted)">No settings found</span>';
 
-  return layers.map((l, i) => {
-    const keysHTML = (keys, label) => keys.length > 0
-      ? `<span style="color:var(--text-muted);font-size:11px">${label}:</span> ${keys.map((k) => `<span class="settings-key">${k}</span>`).join(' ')}`
-      : '';
+  return layers
+    .map((l, i) => {
+      const keysHTML = (keys, label) =>
+        keys.length > 0
+          ? `<span style="color:var(--text-muted);font-size:11px">${label}:</span> ${keys.map((k) => `<span class="settings-key">${k}</span>`).join(' ')}`
+          : '';
 
-    return `<div class="settings-layer depth-${Math.min(i, 2)}" style="--depth:${i}">
+      return `<div class="settings-layer depth-${Math.min(i, 2)}" style="--depth:${i}">
       <span class="settings-layer-name">${l.label}</span>
       <div class="settings-layer-keys">
         ${keysHTML(l.settings.keys, 'settings.json')}
         ${l.localSettings.exists ? keysHTML(l.localSettings.keys, 'settings.local.json') : ''}
       </div>
     </div>`;
-  }).join('');
+    })
+    .join('');
 }
 
 function renderPermissions(c) {
@@ -801,12 +937,16 @@ function renderMcpServers(c) {
   const servers = c.mcpServers || [];
   if (servers.length === 0) return '<span style="color:var(--text-muted)">No MCP servers detected</span>';
 
-  return `<div class="mcp-grid">${servers.map((s) => `
+  return `<div class="mcp-grid">${servers
+    .map(
+      (s) => `
     <div class="mcp-card">
       <div class="mcp-card-name">${s.name}</div>
       <div class="mcp-card-tools">${s.tools.length} tools: ${s.tools.map((t) => `<span class="mcp-tool-name">${t}</span>`).join('')}</div>
     </div>
-  `).join('')}</div>`;
+  `,
+    )
+    .join('')}</div>`;
 }
 
 function renderClaudeMd(c) {
@@ -814,24 +954,31 @@ function renderClaudeMd(c) {
   if (files.length === 0) return '<span style="color:var(--text-muted)">No CLAUDE.md files found</span>';
 
   let depth = 0;
-  return `<div class="claude-md-tree">${files.map((f) => {
-    const d = f.level === 'parent' ? 0 : f.level === 'project' ? 1 : 2;
-    return `<div class="claude-md-node" style="--depth:${d}" data-file="${f.path}">
+  return `<div class="claude-md-tree">${files
+    .map((f) => {
+      const d = f.level === 'parent' ? 0 : f.level === 'project' ? 1 : 2;
+      return `<div class="claude-md-node" style="--depth:${d}" data-file="${f.path}">
       <span class="md-level">${f.level}</span>
       <span class="md-path">${shortenPath(f.path)}</span>
       ${f.preview ? `<span class="md-preview">\u2014 ${f.preview}</span>` : ''}
     </div>`;
-  }).join('')}</div>`;
+    })
+    .join('')}</div>`;
 }
 
 function renderSkillsAgents(c) {
-  const skillsHTML = c.skills.length > 0
-    ? c.skills.map((s) => {
-        const badges = [];
-        if (s.userInvocable) badges.push('<span class="harness-badge badge-invocable">invocable</span>');
-        if (s.hasReferences) badges.push('<span class="harness-badge badge-refs">refs</span>');
-        if (s.symlink) badges.push(`<span class="harness-badge badge-symlink" title="${s.symlinkTarget || ''}">\u2192 symlink</span>`);
-        return `<div class="harness-card" ${s.filePath ? `data-file="${s.filePath}"` : ''}>
+  const skillsHTML =
+    c.skills.length > 0
+      ? c.skills
+          .map((s) => {
+            const badges = [];
+            if (s.userInvocable) badges.push('<span class="harness-badge badge-invocable">invocable</span>');
+            if (s.hasReferences) badges.push('<span class="harness-badge badge-refs">refs</span>');
+            if (s.symlink)
+              badges.push(
+                `<span class="harness-badge badge-symlink" title="${s.symlinkTarget || ''}">\u2192 symlink</span>`,
+              );
+            return `<div class="harness-card" ${s.filePath ? `data-file="${s.filePath}"` : ''}>
           <div class="harness-card-name">
             <span style="width:6px;height:6px;border-radius:50%;background:${s.active ? 'var(--green)' : 'var(--text-muted)'};flex-shrink:0"></span>
             ${s.name}
@@ -839,21 +986,29 @@ function renderSkillsAgents(c) {
           ${s.description ? `<div class="harness-card-desc">${s.description}</div>` : ''}
           ${badges.length ? `<div class="harness-card-meta">${badges.join('')}</div>` : ''}
         </div>`;
-      }).join('')
-    : '<span style="color:var(--text-muted)">No skills</span>';
+          })
+          .join('')
+      : '<span style="color:var(--text-muted)">No skills</span>';
 
-  const agentsHTML = c.agents.length > 0
-    ? c.agents.map((a) => {
-        const badges = [];
-        if (a.symlink) badges.push(`<span class="harness-badge badge-symlink" title="${a.symlinkTarget || ''}">\u2192 symlink</span>`);
-        if (a.tools?.length) a.tools.forEach((t) => badges.push(`<span class="harness-badge badge-tool">${t}</span>`));
-        return `<div class="harness-card agent-card" ${a.filePath ? `data-file="${a.filePath}"` : ''}>
+  const agentsHTML =
+    c.agents.length > 0
+      ? c.agents
+          .map((a) => {
+            const badges = [];
+            if (a.symlink)
+              badges.push(
+                `<span class="harness-badge badge-symlink" title="${a.symlinkTarget || ''}">\u2192 symlink</span>`,
+              );
+            if (a.tools?.length)
+              a.tools.forEach((t) => badges.push(`<span class="harness-badge badge-tool">${t}</span>`));
+            return `<div class="harness-card agent-card" ${a.filePath ? `data-file="${a.filePath}"` : ''}>
           <div class="harness-card-name">${a.name}</div>
           ${a.description ? `<div class="harness-card-desc">${a.description}</div>` : ''}
           ${badges.length ? `<div class="harness-card-meta">${badges.join('')}</div>` : ''}
         </div>`;
-      }).join('')
-    : '<span style="color:var(--text-muted)">No agents</span>';
+          })
+          .join('')
+      : '<span style="color:var(--text-muted)">No agents</span>';
 
   return `<div class="harness-2col">
     <div><div class="config-section"><h3>Skills (${c.skills.length})</h3>${skillsHTML}</div></div>
@@ -865,17 +1020,27 @@ function renderProfilesPlugins(c) {
   const profiles = c.profiles || [];
   const plugins = c.plugins || [];
 
-  const profilesHTML = profiles.length > 0
-    ? profiles.map((p) => `<div class="harness-card" ${p.filePath ? `data-file="${p.filePath}"` : ''}>
+  const profilesHTML =
+    profiles.length > 0
+      ? profiles
+          .map(
+            (p) => `<div class="harness-card" ${p.filePath ? `data-file="${p.filePath}"` : ''}>
         <div class="harness-card-name">${p.name}</div>
-      </div>`).join('')
-    : '<span style="color:var(--text-muted)">No profiles</span>';
+      </div>`,
+          )
+          .join('')
+      : '<span style="color:var(--text-muted)">No profiles</span>';
 
-  const pluginsHTML = plugins.length > 0
-    ? plugins.map((p) => `<div class="harness-card">
+  const pluginsHTML =
+    plugins.length > 0
+      ? plugins
+          .map(
+            (p) => `<div class="harness-card">
         <div class="harness-card-name">${p.name}</div>
-      </div>`).join('')
-    : '<span style="color:var(--text-muted)">No plugins</span>';
+      </div>`,
+          )
+          .join('')
+      : '<span style="color:var(--text-muted)">No plugins</span>';
 
   return `<div class="harness-2col">
     <div><div class="config-section"><h3>Profiles (${profiles.length})</h3>${profilesHTML}</div></div>
@@ -887,16 +1052,20 @@ function renderRulesSection(c) {
   const rules = c.rules || [];
   if (rules.length === 0) return '<span style="color:var(--text-muted)">No rules</span>';
 
-  return rules.map((r) => {
-    const badges = [];
-    if (r.alwaysApply) badges.push('<span class="harness-badge badge-always">always</span>');
-    if (r.subRuleCount > 0) badges.push(`<span class="harness-badge badge-refs">${r.subRuleCount} sub-rules</span>`);
+  return rules
+    .map((r) => {
+      const badges = [];
+      if (r.alwaysApply) badges.push('<span class="harness-badge badge-always">always</span>');
+      if (r.subRuleCount > 0) badges.push(`<span class="harness-badge badge-refs">${r.subRuleCount} sub-rules</span>`);
 
-    const globsHTML = r.globs.length > 0
-      ? `<div class="harness-rule-globs">${r.globs.map((g) => `<span class="glob-tag">${g}</span>`).join('')}</div>`
-      : (r.alwaysApply ? '' : '<div class="harness-rule-globs"><span class="glob-tag">always</span></div>');
+      const globsHTML =
+        r.globs.length > 0
+          ? `<div class="harness-rule-globs">${r.globs.map((g) => `<span class="glob-tag">${g}</span>`).join('')}</div>`
+          : r.alwaysApply
+            ? ''
+            : '<div class="harness-rule-globs"><span class="glob-tag">always</span></div>';
 
-    return `<div class="harness-rule" ${r.filePath ? `data-file="${r.filePath}"` : ''}>
+      return `<div class="harness-rule" ${r.filePath ? `data-file="${r.filePath}"` : ''}>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="harness-rule-name">${r.name}</span>
         ${badges.join('')}
@@ -904,7 +1073,8 @@ function renderRulesSection(c) {
       ${r.summary ? `<div class="harness-rule-summary">${r.summary}</div>` : ''}
       ${globsHTML}
     </div>`;
-  }).join('');
+    })
+    .join('');
 }
 
 function renderHookFlow(c) {
@@ -917,29 +1087,31 @@ function renderHookFlow(c) {
 
   if (events.length === 0) return headerHTML + '<span style="color:var(--text-muted)">No hooks configured</span>';
 
-  const flowHTML = events.map((event) => {
-    const entries = hooks[event];
-    const rows = entries.flatMap((e) =>
-      e.hooks.map((h) => {
-        const isMon = isMonitorHook(h);
-        const label = h.type === 'http'
-          ? `http \u2192 ${h.url || ''}`
-          : (h.command || '').slice(0, 80) || h.type;
-        const hidden = state.hideMonitorHooks && isMon ? ' style="display:none"' : '';
-        return `<div class="hook-flow-row${isMon ? ' is-monitor' : ''}"${hidden}>
+  const flowHTML = events
+    .map((event) => {
+      const entries = hooks[event];
+      const rows = entries
+        .flatMap((e) =>
+          e.hooks.map((h) => {
+            const isMon = isMonitorHook(h);
+            const label = h.type === 'http' ? `http \u2192 ${h.url || ''}` : (h.command || '').slice(0, 80) || h.type;
+            const hidden = state.hideMonitorHooks && isMon ? ' style="display:none"' : '';
+            return `<div class="hook-flow-row${isMon ? ' is-monitor' : ''}"${hidden}>
           <span class="hook-flow-matcher">${e.matcher || '*'}</span>
           <span class="hook-flow-arrow">\u2192</span>
           <span class="hook-flow-action">${label}</span>
           ${e.source ? `<span class="source-tag">${shortenPath(e.source)}</span>` : ''}
         </div>`;
-      })
-    ).join('');
+          }),
+        )
+        .join('');
 
-    return `<div class="hook-flow-event">
+      return `<div class="hook-flow-event">
       <div class="hook-flow-event-name">${event}</div>
       ${rows}
     </div>`;
-  }).join('');
+    })
+    .join('');
 
   return headerHTML + flowHTML;
 }
@@ -948,11 +1120,10 @@ function renderEnvSection(c) {
   const entries = Object.entries(c.env || {});
   if (entries.length === 0) return '<span style="color:var(--text-muted)">No environment variables</span>';
 
-  return entries.map(([k, v]) =>
-    `<div class="env-row"><span class="env-key">${k}</span> = <span class="env-val">${v}</span></div>`
-  ).join('');
+  return entries
+    .map(([k, v]) => `<div class="env-row"><span class="env-key">${k}</span> = <span class="env-val">${v}</span></div>`)
+    .join('');
 }
-
 
 // ============================================================
 // Settings
@@ -1005,8 +1176,8 @@ async function renderSettings() {
           <div class="settings-field">
             <label class="settings-label">Project Path</label>
             <div class="settings-input-row">
-              <input type="text" id="settingsProjectInput" class="settings-input" value="${projectPath}" placeholder="/path/to/project" spellcheck="false">
-              <button id="settingsProjectBtn" class="btn-sm btn-install">Switch</button>
+              <span class="settings-value" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${projectPath}">${projectPath || 'Not set'}</span>
+              <button id="settingsProjectBrowse" class="btn-sm btn-install">Browse...</button>
             </div>
           </div>
           <div class="settings-field">
@@ -1019,15 +1190,27 @@ async function renderSettings() {
       <div class="settings-group">
         <div class="settings-group-title">Monitor Components</div>
         <div class="settings-components" id="settingsComponents">
-          ${monitorComponentRow('hooks', 'HTTP Hooks',
+          ${monitorComponentRow(
+            'hooks',
+            'HTTP Hooks',
             `${HOOK_EVENTS_COUNT} event types \u2014 hook event POST to monitor server`,
-            s.hooks, isCodexProvider)}
-          ${monitorComponentRow('otel', 'OpenTelemetry',
+            s.hooks,
+            isCodexProvider,
+          )}
+          ${monitorComponentRow(
+            'otel',
+            'OpenTelemetry',
             'OTLP HTTP/JSON export \u2014 API latency, cost, tool stats',
-            s.otel, isCodexProvider)}
-          ${monitorComponentRow('statusline', 'Statusline',
+            s.otel,
+            isCodexProvider,
+          )}
+          ${monitorComponentRow(
+            'statusline',
+            'Statusline',
             'Realtime usage script \u2014 model, cost, context, rate limits',
-            s.statusline, isCodexProvider)}
+            s.statusline,
+            isCodexProvider,
+          )}
         </div>
         <div class="settings-bulk-actions">
           <button id="settingsInstallAll" class="btn-sm btn-install">Install All</button>
@@ -1037,18 +1220,9 @@ async function renderSettings() {
     </div>
   `;
 
-  // Project switch
-  const projectInput = document.getElementById('settingsProjectInput');
-  const projectBtn = document.getElementById('settingsProjectBtn');
-  projectBtn.addEventListener('click', () => {
-    const val = projectInput.value.trim();
-    if (val) switchProject(val);
-  });
-  projectInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const val = projectInput.value.trim();
-      if (val) switchProject(val);
-    }
+  // Project switch via folder picker
+  document.getElementById('settingsProjectBrowse').addEventListener('click', () => {
+    openFolderPicker(projectPath || '/');
   });
 
   // Per-component install/uninstall
@@ -1083,24 +1257,36 @@ async function renderSettings() {
   // Bulk actions
   document.getElementById('settingsInstallAll').addEventListener('click', async () => {
     try {
-      const res = await fetch('/api/hooks/install', { method: 'POST',
+      const res = await fetch('/api/hooks/install', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hooks: true, otel: true, statusline: true }),
       });
-      if (!res.ok) { const d = await res.json(); alert(d.error); }
-    } catch (err) { alert(err.message); }
+      if (!res.ok) {
+        const d = await res.json();
+        alert(d.error);
+      }
+    } catch (err) {
+      alert(err.message);
+    }
     await fetchConfig();
     await renderSettings();
   });
 
   document.getElementById('settingsUninstallAll').addEventListener('click', async () => {
     try {
-      const res = await fetch('/api/hooks/uninstall', { method: 'POST',
+      const res = await fetch('/api/hooks/uninstall', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hooks: true, otel: true, statusline: true }),
       });
-      if (!res.ok) { const d = await res.json(); alert(d.error); }
-    } catch (err) { alert(err.message); }
+      if (!res.ok) {
+        const d = await res.json();
+        alert(d.error);
+      }
+    } catch (err) {
+      alert(err.message);
+    }
     await fetchConfig();
     await renderSettings();
   });
@@ -1160,18 +1346,24 @@ function renderDateFilter() {
     { key: '30d', label: '30 Days' },
     { key: 'custom', label: 'Custom' },
   ];
-  const buttons = presets.map(p =>
-    `<button class="date-preset-btn ${preset === p.key ? 'active' : ''}" data-preset="${p.key}">${p.label}</button>`
-  ).join('');
+  const buttons = presets
+    .map(
+      (p) =>
+        `<button class="date-preset-btn ${preset === p.key ? 'active' : ''}" data-preset="${p.key}">${p.label}</button>`,
+    )
+    .join('');
 
   const startVal = from ? from.slice(0, 10) : '';
   const endVal = to ? to.slice(0, 10) : '';
-  const customInputs = preset === 'custom' ? `
+  const customInputs =
+    preset === 'custom'
+      ? `
     <div class="date-custom-inputs">
       <input type="date" class="date-filter-input" data-field="from" value="${startVal}" />
       <span class="date-separator">~</span>
       <input type="date" class="date-filter-input" data-field="to" value="${endVal}" />
-    </div>` : '';
+    </div>`
+      : '';
 
   return `<div class="date-filter-bar">${buttons}${customInputs}</div>`;
 }
@@ -1204,13 +1396,15 @@ function renderTokenUsage() {
   const filterHTML = renderDateFilter();
 
   if (!t) {
-    el.innerHTML = filterHTML + '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
+    el.innerHTML =
+      filterHTML + '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
     return;
   }
 
   const hasOtel = t.realtimeLatency && t.realtimeLatency.count > 0;
   if (t.messageCount === 0 && !hasOtel) {
-    el.innerHTML = filterHTML + '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
+    el.innerHTML =
+      filterHTML + '<span style="color:var(--text-muted);font-size:12px">No token data for this project</span>';
     return;
   }
 
@@ -1220,9 +1414,11 @@ function renderTokenUsage() {
   }
 
   const total = t.totals.input + t.totals.output + t.totals.cacheRead + t.totals.cacheCreate;
-  const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(1) : 0;
-  const cacheHitRate = (t.totals.cacheRead + t.totals.input) > 0
-    ? ((t.totals.cacheRead / (t.totals.cacheRead + t.totals.input)) * 100).toFixed(1) : 0;
+  const pct = (v) => (total > 0 ? ((v / total) * 100).toFixed(1) : 0);
+  const cacheHitRate =
+    t.totals.cacheRead + t.totals.input > 0
+      ? ((t.totals.cacheRead / (t.totals.cacheRead + t.totals.input)) * 100).toFixed(1)
+      : 0;
 
   const cardsHTML = `<div class="token-grid">
     <div class="token-card"><div class="label">Total Tokens</div><div class="value">${fmtNum(total)}</div><div class="sub">${t.sessionCount} sessions, ${t.messageCount} messages</div></div>
@@ -1246,21 +1442,31 @@ function renderTokenUsage() {
     <div class="segment seg-cache-create" style="width:${pct(t.totals.cacheCreate)}%"></div>
   </div>`;
 
-  const modelsHTML = Object.entries(t.byModel).map(([model, counts]) => {
-    const modelTotal = counts.input + counts.output + counts.cacheRead + counts.cacheCreate;
-    return `<div class="token-model-row">
+  const modelsHTML = Object.entries(t.byModel)
+    .map(([model, counts]) => {
+      const modelTotal = counts.input + counts.output + counts.cacheRead + counts.cacheCreate;
+      return `<div class="token-model-row">
       <span class="token-model-name">${model}</span>
       <span class="token-model-stat">in: ${fmtNum(counts.input)}</span>
       <span class="token-model-stat">out: ${fmtNum(counts.output)}</span>
       <span class="token-model-stat">total: ${fmtNum(modelTotal)}</span>
       <span class="token-model-cost">$${(counts.cost || 0).toFixed(2)}</span>
     </div>`;
-  }).join('');
+    })
+    .join('');
 
-  const sessionsHTML = (t.sessions || []).map((s) => {
-    const time = s.startedAt ? new Date(s.startedAt).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '\u2014';
-    const id = s.sessionId ? s.sessionId.slice(0, 8) : s.file;
-    return `<div class="token-session-row">
+  const sessionsHTML = (t.sessions || [])
+    .map((s) => {
+      const time = s.startedAt
+        ? new Date(s.startedAt).toLocaleString('en-GB', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : '\u2014';
+      const id = s.sessionId ? s.sessionId.slice(0, 8) : s.file;
+      return `<div class="token-session-row">
       <span class="token-session-id" title="${s.sessionId || s.file}">${id}</span>
       <span class="token-session-time">${time}</span>
       <span class="token-session-stat">in: ${fmtNum(s.input)}</span>
@@ -1271,13 +1477,20 @@ function renderTokenUsage() {
       <span class="token-session-msgs">${s.messageCount} msgs</span>
       <span class="token-session-model">${s.models.join(', ')}</span>
     </div>`;
-  }).join('');
+    })
+    .join('');
 
   const realtimeHTML = renderRealtimeMetrics(t);
 
-  el.innerHTML = filterHTML + cardsHTML + barHTML + realtimeHTML +
+  el.innerHTML =
+    filterHTML +
+    cardsHTML +
+    barHTML +
+    realtimeHTML +
     (modelsHTML ? `<div class="config-section" style="margin-top:10px"><h3>By Model</h3>${modelsHTML}</div>` : '') +
-    (sessionsHTML ? `<div class="config-section" style="margin-top:10px"><h3>By Session (${t.sessions.length})</h3>${sessionsHTML}</div>` : '');
+    (sessionsHTML
+      ? `<div class="config-section" style="margin-top:10px"><h3>By Session (${t.sessions.length})</h3>${sessionsHTML}</div>`
+      : '');
 }
 
 function renderLiveUsage() {
@@ -1289,14 +1502,20 @@ function renderRateLimits() {
   const el = document.getElementById('rateLimits');
   if (!el) return;
   const entries = state.usage || [];
-  if (entries.length === 0) { el.innerHTML = ''; return; }
+  if (entries.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
 
   // Aggregate rate limits from all sessions (use most recent)
   const latest = entries[0];
   const rl = latest?.rate_limits || {};
   const rl5h = rl.five_hour;
   const rl7d = rl.seven_day;
-  if (!rl5h && !rl7d) { el.innerHTML = ''; return; }
+  if (!rl5h && !rl7d) {
+    el.innerHTML = '';
+    return;
+  }
 
   const gauges = [];
   if (rl5h) {
@@ -1347,7 +1566,12 @@ function renderRealtimeMetrics(t) {
   const m = state.metrics;
   const lat = t.realtimeLatency;
   const hasLatency = lat && lat.count > 0;
-  const hasMetrics = m && (hasLatency || Object.keys(m.modelBreakdown || {}).length > 0 || Object.keys(m.toolStats || {}).length > 0 || (m.errorRate?.total || 0) > 0);
+  const hasMetrics =
+    m &&
+    (hasLatency ||
+      Object.keys(m.modelBreakdown || {}).length > 0 ||
+      Object.keys(m.toolStats || {}).length > 0 ||
+      (m.errorRate?.total || 0) > 0);
 
   if (!hasMetrics) return '';
 
@@ -1382,11 +1606,14 @@ function renderRealtimeMetrics(t) {
   let costChartHTML = '';
   if (timeline.length > 0) {
     const maxCost = Math.max(...timeline.map((b) => b.cost), 0.001);
-    const bars = timeline.slice(-30).map((b) => {
-      const h = Math.max(2, (b.cost / maxCost) * 40);
-      const time = new Date(b.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-      return `<div class="rt-cost-bar" title="${time}: $${b.cost.toFixed(4)}" style="height:${h}px"></div>`;
-    }).join('');
+    const bars = timeline
+      .slice(-30)
+      .map((b) => {
+        const h = Math.max(2, (b.cost / maxCost) * 40);
+        const time = new Date(b.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        return `<div class="rt-cost-bar" title="${time}: $${b.cost.toFixed(4)}" style="height:${h}px"></div>`;
+      })
+      .join('');
     costChartHTML = `<div class="rt-card">
       <div class="rt-card-title">Cost / min</div>
       <div class="rt-cost-bars">${bars}</div>
@@ -1398,16 +1625,18 @@ function renderRealtimeMetrics(t) {
   const models = m?.modelBreakdown || {};
   let modelHTML = '';
   if (Object.keys(models).length > 0) {
-    const rows = Object.entries(models).map(([name, d]) => {
-      const shortName = name.replace(/^claude-/, '').replace(/^gpt-/, '');
-      return `<div class="rt-table-row">
+    const rows = Object.entries(models)
+      .map(([name, d]) => {
+        const shortName = name.replace(/^claude-/, '').replace(/^gpt-/, '');
+        return `<div class="rt-table-row">
         <span class="rt-table-name">${shortName}</span>
         <span class="rt-table-stat">${d.calls} calls</span>
         <span class="rt-table-stat">${fmtMs(d.avgLatency)} avg</span>
         <span class="rt-table-stat">${fmtNum(d.totalTokens)} tok</span>
         <span class="rt-table-cost">$${d.totalCost.toFixed(4)}</span>
       </div>`;
-    }).join('');
+      })
+      .join('');
     modelHTML = `<div class="rt-card">
       <div class="rt-card-title">Model Breakdown</div>
       ${rows}
@@ -1423,7 +1652,7 @@ function renderRealtimeMetrics(t) {
       .slice(0, 10)
       .map(([name, d]) => {
         const errPct = (d.errorRate * 100).toFixed(0);
-        const errClass = d.errorRate > 0.1 ? ' rt-err-high' : (d.errorRate > 0 ? ' rt-err-warn' : '');
+        const errClass = d.errorRate > 0.1 ? ' rt-err-high' : d.errorRate > 0 ? ' rt-err-warn' : '';
         return `<div class="rt-table-row">
           <span class="rt-table-name">${name}</span>
           <span class="rt-table-stat">${d.count}x</span>
@@ -1431,7 +1660,8 @@ function renderRealtimeMetrics(t) {
           <span class="rt-table-stat">${fmtMs(d.p95)} p95</span>
           <span class="rt-table-stat${errClass}">${errPct}% err</span>
         </div>`;
-      }).join('');
+      })
+      .join('');
     toolHTML = `<div class="rt-card">
       <div class="rt-card-title">Tool Performance</div>
       ${rows}
@@ -1444,10 +1674,13 @@ function renderRealtimeMetrics(t) {
   if (errors.total > 0) {
     const rows = Object.entries(errors.byType)
       .sort((a, b) => b[1] - a[1])
-      .map(([type, count]) => `<div class="rt-table-row">
+      .map(
+        ([type, count]) => `<div class="rt-table-row">
         <span class="rt-table-name rt-err-type">${type}</span>
         <span class="rt-table-stat">${count}x</span>
-      </div>`).join('');
+      </div>`,
+      )
+      .join('');
     errorHTML = `<div class="rt-card rt-card-error">
       <div class="rt-card-title">API Errors <span class="rt-err-badge">${errors.total}</span></div>
       ${rows}
@@ -1530,7 +1763,9 @@ async function fetchProvider() {
   try {
     const res = await fetch('/api/provider');
     state.provider = await res.json();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function isCodex() {
@@ -1553,6 +1788,7 @@ async function init() {
   setInterval(fetchUsage, 10000);
 
   initModalHandlers();
+  initFolderPickerHandlers();
 
   // Tool events toggle
   document.getElementById('toggleToolEvents').addEventListener('click', (e) => {
@@ -1584,7 +1820,6 @@ async function init() {
       fetchTokenUsage();
     }
   });
-
 }
 
 init();

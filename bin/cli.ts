@@ -6,10 +6,10 @@ import { detectProvider } from '../src/providers/registry.js';
 
 const args = process.argv.slice(2);
 
-function getArg(name, defaultValue) {
+function getArg(name: string, defaultValue: string): string {
   const idx = args.indexOf(name);
   if (idx === -1) return defaultValue;
-  return args[idx + 1];
+  return args[idx + 1] || defaultValue;
 }
 
 const port = parseInt(getArg('--port', '7432'), 10);
@@ -20,10 +20,10 @@ const noOpen = args.includes('--no-open');
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-claude-monitor - CLI Process Monitor
+orthanc - CLI Process Monitor
 
 Usage:
-  claude-monitor [options]
+  orthanc [options]
 
 Options:
   --project <path>         Target project directory (default: cwd)
@@ -47,7 +47,7 @@ if (shouldInstallHooks) {
   try {
     const result = provider.installHooks(projectRoot, port);
     console.log(`  Hooks installed: ${result.installed} events → ${result.path}\n`);
-  } catch (err) {
+  } catch (err: any) {
     console.error(`  Failed to install hooks: ${err.message}\n`);
   }
 }

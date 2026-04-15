@@ -1,7 +1,7 @@
 #!/bin/bash
-# Claude Code statusline script for claude-monitor
+# Claude Code statusline script for orthanc
 # Receives JSON from stdin, posts to monitor server, outputs status text
-PORT="${CCM_PORT:-7432}"
+PORT="${ORTHANC_PORT:-7432}"
 INPUT=$(cat)
 
 # Post full data to monitor server (background, non-blocking)

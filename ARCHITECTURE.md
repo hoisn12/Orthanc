@@ -2,7 +2,7 @@
 
 ## Overview
 
-**claude-monitor**는 Claude Code / Codex CLI 세션을 실시간으로 모니터링하는 경량 웹 대시보드다. Express 서버가 Hook 이벤트, OpenTelemetry 텔레메트리, Statusline 데이터를 수집하고, SQLite에 저장하며, SSE로 브라우저에 스트리밍한다.
+**orthanc**는 Claude Code / Codex CLI 세션을 실시간으로 모니터링하는 경량 웹 대시보드다. Express 서버가 Hook 이벤트, OpenTelemetry 텔레메트리, Statusline 데이터를 수집하고, SQLite에 저장하며, SSE로 브라우저에 스트리밍한다.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -95,21 +95,23 @@ test/
 
 Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클래스가 인터페이스를 정의하고, `ClaudeProvider`와 `CodexProvider`가 구현체다.
 
-| 책임 | 메서드 |
-|------|--------|
-| 세션 탐색 | `getSessionsDir()`, `listSessionFiles()`, `parseSessionFile()` |
-| 훅 관리 | `getHookEvents()`, `installHooks(root, port, options)`, `uninstallHooks(root, options)` |
-| 훅 상태 | `getMonitorStatus(root)` → `{ hooks, otel, statusline }` |
-| 설정 파싱 | `getConfigDirName()`, `parseProjectConfig()` |
-| 토큰 추적 | `getProjectsDir()`, `getTokenPricing()`, `parseUsageRecord()` |
-| 보안 | `isFileReadAllowed()` |
+| 책임      | 메서드                                                                                  |
+| --------- | --------------------------------------------------------------------------------------- |
+| 세션 탐색 | `getSessionsDir()`, `listSessionFiles()`, `parseSessionFile()`                          |
+| 훅 관리   | `getHookEvents()`, `installHooks(root, port, options)`, `uninstallHooks(root, options)` |
+| 훅 상태   | `getMonitorStatus(root)` → `{ hooks, otel, statusline }`                                |
+| 설정 파싱 | `getConfigDirName()`, `parseProjectConfig()`                                            |
+| 토큰 추적 | `getProjectsDir()`, `getTokenPricing()`, `parseUsageRecord()`                           |
+| 보안      | `isFileReadAllowed()`                                                                   |
 
 `installHooks`/`uninstallHooks`는 `options` 파라미터로 **3가지 컴포넌트를 개별 제어**:
+
 - `hooks`: HTTP POST 훅 (11개 이벤트 타입)
 - `otel`: OpenTelemetry 텔레메트리 환경변수
 - `statusline`: Statusline 스크립트 설정
 
 `registry.js`의 `detectProvider()`가 자동 감지 로직을 수행:
+
 1. 명시적 `--provider` 플래그
 2. 프로젝트에 `.codex/` 존재 → Codex
 3. 프로젝트에 `.claude/` 존재 → Claude
@@ -200,22 +202,22 @@ Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클
 
 SPA 방식의 4페이지 구성 (라우터 없음, DOM 토글):
 
-| 페이지 | 내용 |
-|--------|------|
-| **Monitor** | 활성 세션 목록, 실시간 활동 피드 (SSE), tool 이벤트 필터링 |
-| **Tokens** | 토큰 사용량/비용, 모델별 분석, 세션별 상세, 실시간 OTel 메트릭 |
-| **Harness** | Skills, Agents, Rules, Hooks, Environment, CLAUDE.md 파일 뷰어 |
+| 페이지       | 내용                                                                         |
+| ------------ | ---------------------------------------------------------------------------- |
+| **Monitor**  | 활성 세션 목록, 실시간 활동 피드 (SSE), tool 이벤트 필터링                   |
+| **Tokens**   | 토큰 사용량/비용, 모델별 분석, 세션별 상세, 실시간 OTel 메트릭               |
+| **Harness**  | Skills, Agents, Rules, Hooks, Environment, CLAUDE.md 파일 뷰어               |
 | **Settings** | 프로젝트 경로 변경, 모니터 컴포넌트 개별 설치/제거 (Hooks, OTel, Statusline) |
 
 ### 헤더 Current Tool 인디케이터
 
 헤더 중앙에 현재 실행 상태를 실시간 표시:
 
-| 상태 | 표시 |
-|------|------|
-| **Active** (tool 실행 중) | 초록 펄스 dot + PID + tool명 + 상세 |
+| 상태                                      | 표시                                                        |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| **Active** (tool 실행 중)                 | 초록 펄스 dot + PID + tool명 + 상세                         |
 | **Recent** (세션 alive, 마지막 활동 있음) | 초록 정지 dot + PID + 마지막 이벤트 type + 내용 + 경과 시간 |
-| **None** (활성 세션 없거나 stop 이후) | 인디케이터 숨김 |
+| **None** (활성 세션 없거나 stop 이후)     | 인디케이터 숨김                                             |
 
 - Hook 이벤트(`pre-tool-use`/`post-tool-use`)와 OTel 이벤트(`otel-tool-decision`/`otel-tool-result`/`otel-api-request`) 모두 반영
 - `post-tool-use` 후 500ms 디바운스로 깜빡임 방지
@@ -229,18 +231,18 @@ SPA 방식의 4페이지 구성 (라우터 없음, DOM 토글):
 
 ## 기술 스택
 
-| 항목 | 선택 |
-|------|------|
-| Runtime | Node.js >= 20 |
-| Framework | Express 5 |
-| Module | ESM (`"type": "module"`) |
-| DB | SQLite (better-sqlite3, WAL mode) |
-| 의존성 | express, better-sqlite3, marked |
-| 테스트 | `node --test` (빌트인 테스트 러너) |
-| 프론트엔드 | Vanilla JS/CSS/HTML (빌드 도구 없음) |
-| Markdown | marked (서버에서 정적 제공, 프론트엔드에서 렌더링) |
-| 실시간 통신 | SSE (Server-Sent Events) |
-| 텔레메트리 | OTLP HTTP/JSON |
+| 항목        | 선택                                               |
+| ----------- | -------------------------------------------------- |
+| Runtime     | Node.js >= 20                                      |
+| Framework   | Express 5                                          |
+| Module      | ESM (`"type": "module"`)                           |
+| DB          | SQLite (better-sqlite3, WAL mode)                  |
+| 의존성      | express, better-sqlite3, marked                    |
+| 테스트      | `node --test` (빌트인 테스트 러너)                 |
+| 프론트엔드  | Vanilla JS/CSS/HTML (빌드 도구 없음)               |
+| Markdown    | marked (서버에서 정적 제공, 프론트엔드에서 렌더링) |
+| 실시간 통신 | SSE (Server-Sent Events)                           |
+| 텔레메트리  | OTLP HTTP/JSON                                     |
 
 ## 보안 고려사항
 

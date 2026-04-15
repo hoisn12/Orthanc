@@ -35,8 +35,8 @@ describe('MetricsStore', () => {
 
     const timeline = store.getCostTimeline(bucket);
     assert.equal(timeline.length, 2);
-    assert.ok(Math.abs(timeline[0].cost - 0.03) < 0.001);
-    assert.ok(Math.abs(timeline[1].cost - 0.03) < 0.001);
+    assert.ok(Math.abs(timeline[0]!.cost - 0.03) < 0.001);
+    assert.ok(Math.abs(timeline[1]!.cost - 0.03) < 0.001);
   });
 
   it('tracks tool execution stats', () => {
@@ -47,8 +47,8 @@ describe('MetricsStore', () => {
 
     const tools = store.getToolStats();
     assert.ok(tools['Bash']);
-    assert.equal(tools['Bash'].count, 3);
-    assert.ok(tools['Bash'].errorRate > 0.3 && tools['Bash'].errorRate < 0.34);
+    assert.equal(tools['Bash']!.count, 3);
+    assert.ok(tools['Bash']!.errorRate > 0.3 && tools['Bash']!.errorRate < 0.34);
   });
 
   it('tracks error rate by type', () => {
@@ -71,12 +71,12 @@ describe('MetricsStore', () => {
     const breakdown = store.getModelBreakdown();
     assert.ok(breakdown['claude-sonnet-4-5']);
     assert.ok(breakdown['claude-opus-4-5']);
-    assert.equal(breakdown['claude-sonnet-4-5'].calls, 1);
-    assert.equal(breakdown['claude-opus-4-5'].calls, 1);
+    assert.equal(breakdown['claude-sonnet-4-5']!.calls, 1);
+    assert.equal(breakdown['claude-opus-4-5']!.calls, 1);
   });
 
   it('prunes old records beyond retention', () => {
-    const store = new MetricsStore(1000); // 1 second retention
+    const store = new MetricsStore(1000);
     const old = Date.now() - 2000;
     store.recordApiCall({ model: 'm', durationMs: 100, inputTokens: 100, outputTokens: 100, costUsd: 0.01, timestamp: old });
     store.recordApiCall({ model: 'm', durationMs: 200, inputTokens: 200, outputTokens: 200, costUsd: 0.02, timestamp: Date.now() });

@@ -11,10 +11,10 @@ describe('EventStore', () => {
 
     const events = store.getRecent(10);
     assert.equal(events.length, 2);
-    assert.equal(events[0].type, 'test');
-    assert.equal(events[1].type, 'test2');
-    assert.ok(events[0].id);
-    assert.ok(events[0].timestamp);
+    assert.equal(events[0]!.type, 'test');
+    assert.equal(events[1]!.type, 'test2');
+    assert.ok(events[0]!.id);
+    assert.ok(events[0]!.timestamp);
   });
 
   it('enforces maxSize', () => {
@@ -24,22 +24,22 @@ describe('EventStore', () => {
     }
     const events = store.getRecent(10);
     assert.equal(events.length, 3);
-    assert.equal(events[0].type, 'event-2');
+    assert.equal(events[0]!.type, 'event-2');
   });
 
   it('notifies subscribers', () => {
     const store = new EventStore(100, { db: createTestDb() });
-    const received = [];
+    const received: unknown[] = [];
     store.subscribe((e) => received.push(e));
     store.add({ type: 'ping' });
 
     assert.equal(received.length, 1);
-    assert.equal(received[0].type, 'ping');
+    assert.equal((received[0] as any).type, 'ping');
   });
 
   it('unsubscribe stops notifications', () => {
     const store = new EventStore(100, { db: createTestDb() });
-    const received = [];
+    const received: unknown[] = [];
     const unsub = store.subscribe((e) => received.push(e));
     store.add({ type: 'a' });
     unsub();
@@ -53,6 +53,6 @@ describe('EventStore', () => {
     for (let i = 0; i < 10; i++) store.add({ type: `e-${i}` });
     const events = store.getRecent(3);
     assert.equal(events.length, 3);
-    assert.equal(events[0].type, 'e-7');
+    assert.equal(events[0]!.type, 'e-7');
   });
 });

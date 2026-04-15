@@ -1,14 +1,37 @@
 {
-  "name": "claude-monitor",
+  "name": "orthanc",
   "version": "0.1.0",
   "description": "Lightweight web dashboard for monitoring Claude Code processes",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hoisn12/Orthanc.git"
+  },
+  "homepage": "https://github.com/hoisn12/Orthanc#readme",
+  "bugs": {
+    "url": "https://github.com/hoisn12/Orthanc/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "monitor",
+    "dashboard",
+    "cli",
+    "devtools"
+  ],
   "bin": {
-    "claude-monitor": "./bin/cli.js"
+    "orthanc": "./dist/bin/cli.js"
   },
   "scripts": {
-    "start": "node bin/cli.js",
-    "test": "node --test 'test/*.test.js'"
+    "build": "tsc",
+    "start": "tsc && node dist/bin/cli.js",
+    "test": "tsc && node --test 'dist/test/*.test.js'",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
@@ -22,6 +45,29 @@
     "onlyBuiltDependencies": [
       "better-sqlite3@12.8.0",
       "better-sqlite3"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.2"
+  },
+  "lint-staged": {
+    "*.{js,mjs,ts}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,html,yml,yaml}": [
+      "prettier --write"
     ]
   }
 }

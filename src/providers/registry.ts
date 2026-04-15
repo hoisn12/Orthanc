@@ -1,20 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { Provider } from './provider.js';
 import { ClaudeProvider } from './claude-provider.js';
 import { CodexProvider } from './codex-provider.js';
 
-const providers = {
+const providers: Record<string, new () => Provider> = {
   claude: ClaudeProvider,
   codex: CodexProvider,
 };
 
 /**
  * Create a provider by explicit name.
- * @param {'claude'|'codex'} name
- * @returns {import('./provider.js').Provider}
  */
-export function createProvider(name) {
+export function createProvider(name: string): Provider {
   const Ctor = providers[name];
   if (!Ctor) throw new Error(`Unknown provider: ${name}`);
   return new Ctor();
@@ -24,15 +23,12 @@ export function createProvider(name) {
  * Auto-detect which CLI is in use.
  * Priority:
  * 1. Explicit choice (if provided)
- * 2. Project has .codex/ → codex
- * 3. Project has .claude/ → claude
+ * 2. Project has .claude/ → claude
+ * 3. Project has .codex/ → codex
  * 4. ~/.codex/sessions/ has active sessions → codex
  * 5. Default: claude
- *
- * @param {{ provider?: string, projectRoot?: string }} opts
- * @returns {import('./provider.js').Provider}
  */
-export function detectProvider({ provider, projectRoot } = {}) {
+export function detectProvider({ provider, projectRoot }: { provider?: string; projectRoot?: string } = {}): Provider {
   // 1. Explicit
   if (provider && provider !== 'auto') {
     return createProvider(provider);
@@ -70,18 +66,20 @@ export function detectProvider({ provider, projectRoot } = {}) {
 }
 
 /** List all available provider names */
-export function listProviders() {
+export function listProviders(): string[] {
   return Object.keys(providers);
 }
 
-function hasActiveSessionFiles(dir) {
+function hasActiveSessionFiles(dir: string): boolean {
   try {
     const files = fs.readdirSync(dir);
     return files.length > 0;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
-function latestMtime(dir) {
+function latestMtime(dir: string): number {
   try {
     let latest = 0;
     for (const f of fs.readdirSync(dir)) {
@@ -89,5 +87,7 @@ function latestMtime(dir) {
       if (st.mtimeMs > latest) latest = st.mtimeMs;
     }
     return latest;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }

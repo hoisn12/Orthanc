@@ -2,13 +2,14 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { DbInstance } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
 
-let _db = null;
+let _db: DbInstance | null = null;
 
-export function getDb() {
+export function getDb(): DbInstance {
   if (_db) return _db;
 
   if (!fs.existsSync(DATA_DIR)) {
@@ -66,7 +67,7 @@ export function getDb() {
   return _db;
 }
 
-export function closeDb() {
+export function closeDb(): void {
   if (_db) {
     _db.close();
     _db = null;

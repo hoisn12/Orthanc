@@ -1,6 +1,61 @@
+import type Database from 'better-sqlite3';
 import { getDb } from './db.js';
+import type { TokenRecord, DbInstance } from './types.js';
+
+interface TotalsRow {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_create: number;
+  message_count: number;
+}
+
+interface ByModelRow {
+  model: string;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_create: number;
+}
+
+interface HourlyRow {
+  hour: string;
+  input: number;
+  output: number;
+}
+
+interface SessionRow {
+  session_id: string;
+  session_file: string;
+  cwd: string | null;
+  started_at: string;
+  last_activity: string;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_create: number;
+  message_count: number;
+  models: string | null;
+}
+
+interface SyncStateRow {
+  byte_offset: number;
+}
+
+interface SessionMetaRow {
+  session_id: string;
+  cwd: string | null;
+  started_at: string | null;
+}
 
 export class TokenStore {
+  db: DbInstance;
+
+  private _upsert: Database.Statement;
+  private _getSyncState: Database.Statement;
+  private _setSyncState: Database.Statement;
+  private _getSessionMeta: Database.Statement;
+
   constructor() {
     this.db = getDb();
 
@@ -10,18 +65,16 @@ export class TokenStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    this._getSyncState = this.db.prepare(
-      'SELECT byte_offset FROM token_sync_state WHERE file_path = ?'
-    );
+    this._getSyncState = this.db.prepare('SELECT byte_offset FROM token_sync_state WHERE file_path = ?');
     this._setSyncState = this.db.prepare(
-      'INSERT OR REPLACE INTO token_sync_state (file_path, byte_offset, last_synced) VALUES (?, ?, ?)'
+      'INSERT OR REPLACE INTO token_sync_state (file_path, byte_offset, last_synced) VALUES (?, ?, ?)',
     );
     this._getSessionMeta = this.db.prepare(
-      'SELECT session_id, cwd, started_at FROM token_usage WHERE session_file = ? LIMIT 1'
+      'SELECT session_id, cwd, started_at FROM token_usage WHERE session_file = ? LIMIT 1',
     );
   }
 
-  upsert(record) {
+  upsert(record: TokenRecord): void {
     this._upsert.run(
       record.id,
       record.sessionId,
@@ -38,8 +91,8 @@ export class TokenStore {
     );
   }
 
-  bulkUpsert(records) {
-    const tx = this.db.transaction((rows) => {
+  bulkUpsert(records: TokenRecord[]): void {
+    const tx = this.db.transaction((rows: TokenRecord[]) => {
       for (const r of rows) this.upsert(r);
     });
     tx(records);
@@ -47,32 +100,46 @@ export class TokenStore {
 
   // ── Aggregated queries (no full-row loading) ──────────────
 
-  queryAggregated({ from, to } = {}) {
+  queryAggregated({ from, to }: { from?: string | null; to?: string | null } = {}) {
     const where = buildWhere(from, to);
     const params = buildParams(from, to);
 
-    const totals = this.db.prepare(`
+    const totals = this.db
+      .prepare(
+        `
       SELECT COALESCE(SUM(input),0) as input, COALESCE(SUM(output),0) as output,
              COALESCE(SUM(cache_read),0) as cache_read, COALESCE(SUM(cache_create),0) as cache_create,
              COUNT(*) as message_count
       FROM token_usage ${where}
-    `).get(...params);
+    `,
+      )
+      .get(...params) as TotalsRow;
 
-    const byModel = this.db.prepare(`
+    const byModel = this.db
+      .prepare(
+        `
       SELECT model, SUM(input) as input, SUM(output) as output,
              SUM(cache_read) as cache_read, SUM(cache_create) as cache_create
       FROM token_usage ${where}
       GROUP BY model
-    `).all(...params);
+    `,
+      )
+      .all(...params) as ByModelRow[];
 
-    const hourly = this.db.prepare(`
+    const hourly = this.db
+      .prepare(
+        `
       SELECT substr(timestamp, 1, 13) as hour,
              SUM(input) as input, SUM(output) as output
       FROM token_usage ${where}
       GROUP BY hour ORDER BY hour
-    `).all(...params);
+    `,
+      )
+      .all(...params) as HourlyRow[];
 
-    const sessions = this.db.prepare(`
+    const sessions = this.db
+      .prepare(
+        `
       SELECT session_id, session_file, cwd,
              MIN(timestamp) as started_at, MAX(timestamp) as last_activity,
              SUM(input) as input, SUM(output) as output,
@@ -82,23 +149,33 @@ export class TokenStore {
       FROM token_usage ${where}
       GROUP BY session_id
       ORDER BY started_at DESC
-    `).all(...params);
+    `,
+      )
+      .all(...params) as SessionRow[];
 
     // recent24h: always relative to now, independent of filter
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const recent24h = this.db.prepare(`
+    const recent24h = this.db
+      .prepare(
+        `
       SELECT COALESCE(SUM(input),0) as input, COALESCE(SUM(output),0) as output,
              COALESCE(SUM(cache_read),0) as cache_read, COALESCE(SUM(cache_create),0) as cache_create
       FROM token_usage WHERE timestamp >= ?
-    `).get(cutoff24h);
+    `,
+      )
+      .get(cutoff24h) as TotalsRow;
 
     // recent24h by model (for cost calculation)
-    const recent24hByModel = this.db.prepare(`
+    const recent24hByModel = this.db
+      .prepare(
+        `
       SELECT model, SUM(input) as input, SUM(output) as output,
              SUM(cache_read) as cache_read, SUM(cache_create) as cache_create
       FROM token_usage WHERE timestamp >= ?
       GROUP BY model
-    `).all(cutoff24h);
+    `,
+      )
+      .all(cutoff24h) as ByModelRow[];
 
     return {
       totals: {
@@ -108,15 +185,15 @@ export class TokenStore {
         cacheCreate: totals.cache_create,
       },
       messageCount: totals.message_count,
-      byModel: byModel.map(r => ({
+      byModel: byModel.map((r) => ({
         model: r.model,
         input: r.input,
         output: r.output,
         cacheRead: r.cache_read,
         cacheCreate: r.cache_create,
       })),
-      hourly: Object.fromEntries(hourly.map(r => [r.hour, { input: r.input, output: r.output }])),
-      sessions: sessions.map(r => ({
+      hourly: Object.fromEntries(hourly.map((r) => [r.hour, { input: r.input, output: r.output }])),
+      sessions: sessions.map((r) => ({
         sessionId: r.session_id,
         file: r.session_file,
         cwd: r.cwd || '',
@@ -135,7 +212,7 @@ export class TokenStore {
         cacheRead: recent24h.cache_read,
         cacheCreate: recent24h.cache_create,
       },
-      recent24hByModel: recent24hByModel.map(r => ({
+      recent24hByModel: recent24hByModel.map((r) => ({
         model: r.model,
         input: r.input,
         output: r.output,
@@ -147,17 +224,17 @@ export class TokenStore {
 
   // ── Sync state ────────────────────────────────────────────
 
-  getSyncState(filePath) {
-    const row = this._getSyncState.get(filePath);
+  getSyncState(filePath: string): number {
+    const row = this._getSyncState.get(filePath) as SyncStateRow | undefined;
     return row ? row.byte_offset : 0;
   }
 
-  setSyncState(filePath, byteOffset) {
+  setSyncState(filePath: string, byteOffset: number): void {
     this._setSyncState.run(filePath, byteOffset, new Date().toISOString());
   }
 
-  getSessionMeta(sessionFile) {
-    const row = this._getSessionMeta.get(sessionFile);
+  getSessionMeta(sessionFile: string): { sessionId: string; cwd: string; startedAt: string } | null {
+    const row = this._getSessionMeta.get(sessionFile) as SessionMetaRow | undefined;
     if (!row) return null;
     return {
       sessionId: row.session_id,
@@ -167,15 +244,15 @@ export class TokenStore {
   }
 }
 
-function buildWhere(from, to) {
+function buildWhere(from?: string | null, to?: string | null): string {
   if (from && to) return 'WHERE timestamp >= ? AND timestamp < ?';
   if (from) return 'WHERE timestamp >= ?';
   if (to) return 'WHERE timestamp < ?';
   return '';
 }
 
-function buildParams(from, to) {
-  const params = [];
+function buildParams(from?: string | null, to?: string | null): string[] {
+  const params: string[] = [];
   if (from) params.push(from);
   if (to) params.push(to);
   return params;

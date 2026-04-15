@@ -27,10 +27,12 @@ describe('flattenAttributes', () => {
   });
 
   it('handles arrayValue', () => {
-    const attrs = [{
-      key: 'tags',
-      value: { arrayValue: { values: [{ stringValue: 'a' }, { stringValue: 'b' }] } },
-    }];
+    const attrs = [
+      {
+        key: 'tags',
+        value: { arrayValue: { values: [{ stringValue: 'a' }, { stringValue: 'b' }] } },
+      },
+    ];
     assert.deepEqual(flattenAttributes(attrs), { tags: ['a', 'b'] });
   });
 
@@ -52,31 +54,37 @@ describe('OtelReceiver.ingestLogs', () => {
     const receiver = new OtelReceiver(eventStore, metricsStore);
 
     const body = {
-      resourceLogs: [{
-        resource: { attributes: [{ key: 'session.id', value: { stringValue: 'sess-123' } }] },
-        scopeLogs: [{
-          logRecords: [{
-            timeUnixNano: String(Date.now() * 1000000),
-            attributes: [
-              { key: 'event.name', value: { stringValue: 'claude_code.api_request' } },
-              { key: 'model', value: { stringValue: 'claude-sonnet-4-5' } },
-              { key: 'input_tokens', value: { intValue: '500' } },
-              { key: 'output_tokens', value: { intValue: '200' } },
-              { key: 'duration_ms', value: { doubleValue: 1500.5 } },
-              { key: 'cost_usd', value: { doubleValue: 0.003 } },
-            ],
-          }],
-        }],
-      }],
+      resourceLogs: [
+        {
+          resource: { attributes: [{ key: 'session.id', value: { stringValue: 'sess-123' } }] },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: String(Date.now() * 1000000),
+                  attributes: [
+                    { key: 'event.name', value: { stringValue: 'claude_code.api_request' } },
+                    { key: 'model', value: { stringValue: 'claude-sonnet-4-5' } },
+                    { key: 'input_tokens', value: { intValue: '500' } },
+                    { key: 'output_tokens', value: { intValue: '200' } },
+                    { key: 'duration_ms', value: { doubleValue: 1500.5 } },
+                    { key: 'cost_usd', value: { doubleValue: 0.003 } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
     };
 
     receiver.ingestLogs(body);
 
     const events = eventStore.getRecent(10);
     assert.equal(events.length, 1);
-    assert.equal(events[0].type, 'otel-api-request');
-    assert.equal(events[0].sessionId, 'sess-123');
-    assert.equal(events[0].payload.model, 'claude-sonnet-4-5');
+    assert.equal(events[0]!.type, 'otel-api-request');
+    assert.equal(events[0]!.sessionId, 'sess-123');
+    assert.equal(events[0]!.payload.model, 'claude-sonnet-4-5');
 
     const latency = metricsStore.getApiLatencyStats();
     assert.equal(latency.count, 1);
@@ -89,26 +97,32 @@ describe('OtelReceiver.ingestLogs', () => {
     const receiver = new OtelReceiver(eventStore, metricsStore);
 
     const body = {
-      resourceLogs: [{
-        resource: { attributes: [] },
-        scopeLogs: [{
-          logRecords: [{
-            timeUnixNano: String(Date.now() * 1000000),
-            attributes: [
-              { key: 'event.name', value: { stringValue: 'claude_code.api_error' } },
-              { key: 'model', value: { stringValue: 'claude-sonnet-4-5' } },
-              { key: 'error_type', value: { stringValue: 'rate_limit' } },
-              { key: 'status_code', value: { intValue: '429' } },
-            ],
-          }],
-        }],
-      }],
+      resourceLogs: [
+        {
+          resource: { attributes: [] },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: String(Date.now() * 1000000),
+                  attributes: [
+                    { key: 'event.name', value: { stringValue: 'claude_code.api_error' } },
+                    { key: 'model', value: { stringValue: 'claude-sonnet-4-5' } },
+                    { key: 'error_type', value: { stringValue: 'rate_limit' } },
+                    { key: 'status_code', value: { intValue: '429' } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
     };
 
     receiver.ingestLogs(body);
 
     const events = eventStore.getRecent(10);
-    assert.equal(events[0].type, 'otel-api-error');
+    assert.equal(events[0]!.type, 'otel-api-error');
 
     const errors = metricsStore.getErrorRate();
     assert.equal(errors.total, 1);
@@ -121,27 +135,33 @@ describe('OtelReceiver.ingestLogs', () => {
     const receiver = new OtelReceiver(eventStore, metricsStore);
 
     const body = {
-      resourceLogs: [{
-        resource: { attributes: [] },
-        scopeLogs: [{
-          logRecords: [{
-            timeUnixNano: String(Date.now() * 1000000),
-            attributes: [
-              { key: 'event.name', value: { stringValue: 'claude_code.tool_result' } },
-              { key: 'tool_name', value: { stringValue: 'Bash' } },
-              { key: 'duration_ms', value: { doubleValue: 250 } },
-              { key: 'success', value: { boolValue: true } },
-            ],
-          }],
-        }],
-      }],
+      resourceLogs: [
+        {
+          resource: { attributes: [] },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: String(Date.now() * 1000000),
+                  attributes: [
+                    { key: 'event.name', value: { stringValue: 'claude_code.tool_result' } },
+                    { key: 'tool_name', value: { stringValue: 'Bash' } },
+                    { key: 'duration_ms', value: { doubleValue: 250 } },
+                    { key: 'success', value: { boolValue: true } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
     };
 
     receiver.ingestLogs(body);
 
     const tools = metricsStore.getToolStats();
     assert.ok(tools['Bash']);
-    assert.equal(tools['Bash'].count, 1);
+    assert.equal(tools['Bash']!.count, 1);
   });
 
   it('ignores unknown event names', () => {
@@ -150,17 +170,21 @@ describe('OtelReceiver.ingestLogs', () => {
     const receiver = new OtelReceiver(eventStore, metricsStore);
 
     const body = {
-      resourceLogs: [{
-        resource: { attributes: [] },
-        scopeLogs: [{
-          logRecords: [{
-            timeUnixNano: String(Date.now() * 1000000),
-            attributes: [
-              { key: 'event.name', value: { stringValue: 'some.other.event' } },
-            ],
-          }],
-        }],
-      }],
+      resourceLogs: [
+        {
+          resource: { attributes: [] },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: String(Date.now() * 1000000),
+                  attributes: [{ key: 'event.name', value: { stringValue: 'some.other.event' } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
     };
 
     receiver.ingestLogs(body);
@@ -187,31 +211,35 @@ describe('OtelReceiver.ingestTraces', () => {
 
     const now = BigInt(Date.now()) * 1000000n;
     const body = {
-      resourceSpans: [{
-        resource: { attributes: [] },
-        scopeSpans: [{
-          spans: [{
-            name: 'tool.Bash',
-            spanId: 'abc123',
-            parentSpanId: 'parent1',
-            startTimeUnixNano: String(now),
-            endTimeUnixNano: String(now + 500000000n), // 500ms
-            status: { code: 1 },
-            attributes: [
-              { key: 'tool.name', value: { stringValue: 'Bash' } },
-            ],
-          }],
-        }],
-      }],
+      resourceSpans: [
+        {
+          resource: { attributes: [] },
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  name: 'tool.Bash',
+                  spanId: 'abc123',
+                  parentSpanId: 'parent1',
+                  startTimeUnixNano: String(now),
+                  endTimeUnixNano: String(now + 500000000n), // 500ms
+                  status: { code: 1 },
+                  attributes: [{ key: 'tool.name', value: { stringValue: 'Bash' } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
     };
 
     receiver.ingestTraces(body);
 
     const events = eventStore.getRecent(10);
     assert.equal(events.length, 1);
-    assert.equal(events[0].type, 'otel-span');
-    assert.equal(events[0].payload.durationMs, 500);
-    assert.equal(events[0].payload.parentSpanId, 'parent1');
+    assert.equal(events[0]!.type, 'otel-span');
+    assert.equal(events[0]!.payload.durationMs, 500);
+    assert.equal(events[0]!.payload.parentSpanId, 'parent1');
 
     const tools = metricsStore.getToolStats();
     assert.ok(tools['Bash']);

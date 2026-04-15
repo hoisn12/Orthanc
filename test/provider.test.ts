@@ -59,6 +59,7 @@ describe('Provider interface', () => {
       },
     };
     const result = p.parseUsageRecord(record);
+    assert.ok(result);
     assert.equal(result.input, 100);
     assert.equal(result.output, 50);
     assert.equal(result.cacheRead, 10);
@@ -74,6 +75,7 @@ describe('Provider interface', () => {
       usage: { prompt_tokens: 200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 20 } },
     };
     const result = p.parseUsageRecord(record);
+    assert.ok(result);
     assert.equal(result.input, 200);
     assert.equal(result.output, 80);
     assert.equal(result.cacheRead, 20);

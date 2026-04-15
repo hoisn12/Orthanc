@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { findProjectDir, collectJsonlFiles } from './token-tracker.js';
+import type { Provider } from './providers/provider.js';
+import type { TokenStore } from './token-store.js';
+import type { UsageRecord, TokenRecord } from './types.js';
 
 /**
  * Sync all JSONL files for a project into the token_usage DB table.
  * Uses byte-offset tracking to only parse new data on subsequent calls.
  */
-export async function syncAll(provider, projectRoot, tokenStore) {
+export async function syncAll(provider: Provider, projectRoot: string, tokenStore: TokenStore): Promise<{ synced: number; files: number }> {
   const projectsDir = provider.getProjectsDir();
   const projectDir = findProjectDir(projectsDir, projectRoot);
   if (!projectDir) return { synced: 0, files: 0 };
@@ -26,15 +29,14 @@ export async function syncAll(provider, projectRoot, tokenStore) {
 
 /**
  * Incrementally sync a single JSONL file into the DB.
- * Reads only new bytes since last sync offset.
- *
- * For incremental reads (offset > 0), session metadata (sessionId, cwd)
- * may not appear in the new bytes. We first try to recover it from
- * existing DB records for this file, then fall back to the filename.
  */
-export async function syncFile(provider, filePath, tokenStore) {
-  let stat;
-  try { stat = fs.statSync(filePath); } catch { return 0; }
+export async function syncFile(provider: Provider, filePath: string, tokenStore: TokenStore): Promise<number> {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return 0;
+  }
 
   const savedOffset = tokenStore.getSyncState(filePath);
 
@@ -63,19 +65,21 @@ export async function syncFile(provider, filePath, tokenStore) {
   const stream = fs.createReadStream(filePath, { encoding: 'utf-8', start: offset });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
-  const byMessageId = new Map();
-  const anonymous = [];
+  const byMessageId = new Map<string, UsageRecord>();
+  const anonymous: UsageRecord[] = [];
 
   for await (const line of rl) {
     if (!line.trim()) continue;
-    let record;
-    try { record = JSON.parse(line); } catch { continue; }
+    let record: any;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
 
     // Extract session metadata
-    if (!sessionId && (record.sessionId || record.session_id))
-      sessionId = record.sessionId || record.session_id;
-    if (!cwd && (record.cwd || record.working_directory))
-      cwd = record.cwd || record.working_directory;
+    if (!sessionId && (record.sessionId || record.session_id)) sessionId = record.sessionId || record.session_id;
+    if (!cwd && (record.cwd || record.working_directory)) cwd = record.cwd || record.working_directory;
     if (record.timestamp) {
       if (!startedAt) startedAt = record.timestamp;
       lastActivity = record.timestamp;
@@ -102,7 +106,7 @@ export async function syncFile(provider, filePath, tokenStore) {
     sessionId = sessionFile.replace('.jsonl', '');
   }
 
-  const records = allUsages.map((u, i) => ({
+  const records: TokenRecord[] = allUsages.map((u, i) => ({
     id: u.messageId || `${sessionFile}-${u.timestamp}-${i}`,
     sessionId,
     sessionFile,

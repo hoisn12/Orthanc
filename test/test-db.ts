@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3';
+import type { DbInstance } from '../src/types.js';
 
 /**
  * Create an isolated in-memory SQLite DB for tests.
  * Has the same schema as the production DB but no shared state.
  */
-export function createTestDb() {
+export function createTestDb(): DbInstance {
   const db = new Database(':memory:');
   db.pragma('journal_mode = WAL');
 

@@ -1,15 +1,45 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Provider } from './providers/provider.js';
+import type { TokenStore } from './token-store.js';
+import type { TokenCounts, ModelPricing } from './types.js';
 
 // ── DB-based getTokenUsage (SQL aggregation) ───────────────
 
-export function getTokenUsage(provider, tokenStore, { from, to } = {}) {
+interface TokenUsageSession {
+  sessionId: string;
+  file: string;
+  startedAt: string;
+  lastActivity: string;
+  cwd: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreate: number;
+  total: number;
+  cost: number;
+  messageCount: number;
+  models: string[];
+}
+
+interface TokenUsageResult {
+  totals: TokenCounts;
+  cost: number;
+  byModel: Record<string, TokenCounts & { cost: number }>;
+  hourly: Record<string, { input: number; output: number }>;
+  sessionCount: number;
+  messageCount: number;
+  recent24h: TokenCounts & { cost: number };
+  sessions: TokenUsageSession[];
+}
+
+export function getTokenUsage(provider: Provider, tokenStore: TokenStore, { from, to }: { from?: string | null; to?: string | null } = {}): TokenUsageResult {
   const data = tokenStore.queryAggregated({ from, to });
 
   if (data.messageCount === 0) return emptyResult();
 
   // Convert byModel array → object with cost
-  const byModelMap = {};
+  const byModelMap: Record<string, TokenCounts> = {};
   for (const r of data.byModel) {
     byModelMap[r.model] = {
       input: r.input,
@@ -20,7 +50,7 @@ export function getTokenUsage(provider, tokenStore, { from, to } = {}) {
   }
   const cost = estimateCostByModel(provider, byModelMap);
 
-  const byModelWithCost = {};
+  const byModelWithCost: Record<string, TokenCounts & { cost: number }> = {};
   for (const [model, counts] of Object.entries(byModelMap)) {
     byModelWithCost[model] = {
       ...counts,
@@ -31,18 +61,23 @@ export function getTokenUsage(provider, tokenStore, { from, to } = {}) {
   // Build session list with cost
   const sessionList = data.sessions.map((s) => {
     const total = s.input + s.output + s.cacheRead + s.cacheCreate;
-    const sessionByModel = {};
+    const sessionByModel: Record<string, TokenCounts> = {};
     for (const m of s.models) {
-      // Per-session model breakdown not available from GROUP BY,
-      // use the session total attributed to its models evenly as approximation.
-      // For accurate per-session-per-model cost, we'd need a separate query.
-      // Instead, compute cost from session totals using the first model.
       sessionByModel[m] = sessionByModel[m] || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
     }
-    // Simple cost: attribute all session tokens to its models proportionally
-    const sessionCost = s.models.length === 1
-      ? estimateCostByModel(provider, { [s.models[0]]: { input: s.input, output: s.output, cacheRead: s.cacheRead, cacheCreate: s.cacheCreate } })
-      : estimateCostByModel(provider, { [s.models[0] || 'unknown']: { input: s.input, output: s.output, cacheRead: s.cacheRead, cacheCreate: s.cacheCreate } });
+    const sessionCost =
+      s.models.length === 1
+        ? estimateCostByModel(provider, {
+            [s.models[0]!]: { input: s.input, output: s.output, cacheRead: s.cacheRead, cacheCreate: s.cacheCreate },
+          })
+        : estimateCostByModel(provider, {
+            [s.models[0] || 'unknown']: {
+              input: s.input,
+              output: s.output,
+              cacheRead: s.cacheRead,
+              cacheCreate: s.cacheCreate,
+            },
+          });
 
     return {
       sessionId: s.sessionId,
@@ -62,7 +97,7 @@ export function getTokenUsage(provider, tokenStore, { from, to } = {}) {
   });
 
   // recent24h with cost
-  const recent24hByModelMap = {};
+  const recent24hByModelMap: Record<string, TokenCounts> = {};
   for (const r of data.recent24hByModel) {
     recent24hByModelMap[r.model] = {
       input: r.input,
@@ -86,7 +121,7 @@ export function getTokenUsage(provider, tokenStore, { from, to } = {}) {
 
 // ── Helpers exported for token-sync.js ─────────────────────
 
-export function findProjectDir(projectsDir, projectRoot) {
+export function findProjectDir(projectsDir: string, projectRoot: string): string | null {
   if (!fs.existsSync(projectsDir)) return null;
 
   const encoded = projectRoot.replaceAll('/', '-');
@@ -100,13 +135,15 @@ export function findProjectDir(projectsDir, projectRoot) {
       return decoded.endsWith(projectRoot) || projectRoot.endsWith(decoded.slice(1));
     });
     if (match) return path.join(projectsDir, match);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return null;
 }
 
-export function collectJsonlFiles(dir) {
-  const results = [];
+export function collectJsonlFiles(dir: string): string[] {
+  const results: string[] = [];
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
@@ -117,13 +154,15 @@ export function collectJsonlFiles(dir) {
         results.push(...collectJsonlFiles(full));
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return results;
 }
 
 // ── Cost calculation ───────────────────────────────────────
 
-function getPricing(provider, model) {
+function getPricing(provider: Provider, model: string): ModelPricing {
   const pricing = provider.getTokenPricing();
   for (const [key, p] of Object.entries(pricing)) {
     if (model.startsWith(key)) return p;
@@ -131,7 +170,7 @@ function getPricing(provider, model) {
   return provider.getDefaultPricing();
 }
 
-function estimateCostByModel(provider, byModel) {
+function estimateCostByModel(provider: Provider, byModel: Record<string, TokenCounts>): number {
   let total = 0;
   for (const [model, counts] of Object.entries(byModel)) {
     const p = getPricing(provider, model);
@@ -144,7 +183,7 @@ function estimateCostByModel(provider, byModel) {
   return total;
 }
 
-function emptyResult() {
+function emptyResult(): TokenUsageResult {
   return {
     totals: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
     cost: 0,

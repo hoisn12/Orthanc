@@ -1,13 +1,43 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findProjectDir } from './token-tracker.js';
+import type { Provider } from './providers/provider.js';
+import type { SessionWatcher } from './session-watcher.js';
+import type { EventStore } from './event-store.js';
+import type { TokenStore } from './token-store.js';
+import type { SessionInfo } from './types.js';
+
+interface FileState {
+  byteOffset: number;
+  buffer: string;
+  knownMessages: Map<string, number>;
+}
+
+interface JsonlWatcherOptions {
+  provider: Provider;
+  sessionWatcher: SessionWatcher;
+  eventStore: EventStore;
+  tokenStore: TokenStore;
+  projectRoot: string;
+  pollInterval?: number;
+}
 
 /**
  * Watches JSONL session files for active sessions and emits
  * assistant message events in real-time (streaming).
  */
 export class JsonlWatcher {
-  constructor({ provider, sessionWatcher, eventStore, tokenStore, projectRoot, pollInterval = 1000 }) {
+  provider: Provider;
+  sessionWatcher: SessionWatcher;
+  eventStore: EventStore;
+  tokenStore: TokenStore;
+  projectRoot: string;
+  pollInterval: number;
+  timer: ReturnType<typeof setInterval> | null;
+  fileState: Map<string, FileState>;
+  projectDir: string | null;
+
+  constructor({ provider, sessionWatcher, eventStore, tokenStore, projectRoot, pollInterval = 1000 }: JsonlWatcherOptions) {
     this.provider = provider;
     this.sessionWatcher = sessionWatcher;
     this.eventStore = eventStore;
@@ -15,32 +45,30 @@ export class JsonlWatcher {
     this.projectRoot = projectRoot;
     this.pollInterval = pollInterval;
     this.timer = null;
-
-    // Track per-file state: { byteOffset, buffer, knownMessages }
     this.fileState = new Map();
     this.projectDir = null;
   }
 
-  start() {
+  start(): void {
     this.projectDir = findProjectDir(this.provider.getProjectsDir(), this.projectRoot);
     this.poll();
     this.timer = setInterval(() => this.poll(), this.pollInterval);
   }
 
-  stop() {
+  stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
   }
 
-  setProjectRoot(projectRoot) {
+  setProjectRoot(projectRoot: string): void {
     this.projectRoot = projectRoot;
     this.fileState.clear();
     this.projectDir = findProjectDir(this.provider.getProjectsDir(), this.projectRoot);
   }
 
-  poll() {
+  poll(): void {
     if (!this.projectDir) return;
 
     const activeSessions = this.sessionWatcher.getSessions();
@@ -60,9 +88,13 @@ export class JsonlWatcher {
     }
   }
 
-  pollFile(filePath, session) {
-    let stat;
-    try { stat = fs.statSync(filePath); } catch { return; }
+  private pollFile(filePath: string, session: SessionInfo): void {
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      return;
+    }
 
     const sid = session.sessionId;
     let state = this.fileState.get(sid);
@@ -81,8 +113,8 @@ export class JsonlWatcher {
     if (stat.size <= state.byteOffset) return; // No new data
 
     // Read only new bytes (with try/finally to prevent fd leak)
-    let fd;
-    let raw;
+    let fd: number | undefined;
+    let raw: string;
     try {
       fd = fs.openSync(filePath, 'r');
       const newSize = stat.size - state.byteOffset;
@@ -107,9 +139,13 @@ export class JsonlWatcher {
     }
   }
 
-  processLine(line, session, state) {
-    let record;
-    try { record = JSON.parse(line); } catch { return; }
+  private processLine(line: string, session: SessionInfo, state: FileState): void {
+    let record: any;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      return;
+    }
 
     // Extract token usage into DB (all record types may have usage)
     if (this.tokenStore) {
@@ -131,7 +167,9 @@ export class JsonlWatcher {
             lastActivity: '',
           });
         }
-      } catch { /* ignore upsert errors */ }
+      } catch {
+        /* ignore upsert errors */
+      }
     }
 
     // Only care about assistant messages with content
@@ -143,7 +181,7 @@ export class JsonlWatcher {
     if (!msgId) return;
 
     // Extract text content
-    const textParts = [];
+    const textParts: string[] = [];
     for (const block of msg.content) {
       if (block.type === 'text' && block.text) {
         textParts.push(block.text);
@@ -163,7 +201,7 @@ export class JsonlWatcher {
     if (state.knownMessages.size > 500) {
       const keys = Array.from(state.knownMessages.keys());
       for (let i = 0; i < keys.length - 200; i++) {
-        state.knownMessages.delete(keys[i]);
+        state.knownMessages.delete(keys[i]!);
       }
     }
 

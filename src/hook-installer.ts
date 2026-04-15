@@ -1,14 +1,15 @@
 import path from 'node:path';
+import type { Provider } from './providers/provider.js';
+import type { InstallOptions, InstallResult, UninstallResult } from './types.js';
 
 /**
  * Install hooks using the given provider.
- * Kept as thin wrappers for backward compatibility and CLI mode.
  */
-export function installHooks(provider, projectRoot, port = 7432, options = {}) {
+export function installHooks(provider: Provider, projectRoot: string, port = 7432, options: InstallOptions = {}): InstallResult {
   return provider.installHooks(projectRoot, port, options);
 }
 
-export function uninstallHooks(provider, projectRoot, options = {}) {
+export function uninstallHooks(provider: Provider, projectRoot: string, options: InstallOptions = {}): UninstallResult {
   return provider.uninstallHooks(projectRoot, options);
 }
 
@@ -18,10 +19,10 @@ if (isMain) {
   const { detectProvider } = await import('./providers/registry.js');
   const args = process.argv.slice(2);
 
-  function getArg(name, defaultValue) {
+  function getArg(name: string, defaultValue: string): string {
     const idx = args.indexOf(name);
     if (idx === -1) return defaultValue;
-    return args[idx + 1];
+    return args[idx + 1] || defaultValue;
   }
 
   const project = getArg('--project', process.cwd());
@@ -36,6 +37,8 @@ if (isMain) {
     const result = installHooks(provider, project, port);
     console.log(`Installed ${result.installed} monitor hooks to ${result.path}`);
   } else {
-    console.log('Usage: node src/hook-installer.js --install|--uninstall --project /path [--port 7432] [--provider claude|codex]');
+    console.log(
+      'Usage: node src/hook-installer.js --install|--uninstall --project /path [--port 7432] [--provider claude|codex]',
+    );
   }
 }
