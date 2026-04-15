@@ -8,7 +8,6 @@ const state = {
   sessions: [],
   events: [],
   subagents: new Map(),
-  connected: false,
   tokens: null,
   hideMonitorHooks: false,
   filterPid: null,
@@ -74,10 +73,6 @@ async function fetchRecentEvents() {
 
 function connectSSE() {
   const source = new EventSource('/api/events/stream');
-  source.onopen = () => {
-    state.connected = true;
-    updateStatus();
-  };
   source.onmessage = (e) => {
     const event = JSON.parse(e.data);
     state.events.push(event);
@@ -91,8 +86,6 @@ function connectSSE() {
     renderSessions();
   };
   source.onerror = () => {
-    state.connected = false;
-    updateStatus();
     source.close();
     setTimeout(connectSSE, 3000);
   };
@@ -243,13 +236,6 @@ function renderCurrentTool() {
 }
 
 // --- Monitor renderers ---
-
-function updateStatus() {
-  const dot = document.getElementById('statusDot');
-  const text = document.getElementById('statusText');
-  dot.className = state.connected ? 'status-dot' : 'status-dot disconnected';
-  text.textContent = state.connected ? 'Live' : 'Disconnected';
-}
 
 function renderSessions() {
   renderCurrentTool();
