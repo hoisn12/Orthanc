@@ -62,6 +62,11 @@ export function getDb(): DbInstance {
       byte_offset INTEGER NOT NULL DEFAULT 0,
       last_synced TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   return _db;

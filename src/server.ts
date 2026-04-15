@@ -26,7 +26,7 @@ interface ServerInstance {
   stop: () => void;
 }
 
-export function createServer({ projectRoot, port = 7432, provider: initialProvider }: { projectRoot: string; port?: number; provider: Provider }): ServerInstance {
+export function createServer({ projectRoot, port = 7432, provider: initialProvider, explicitProject = true }: { projectRoot: string; port?: number; provider: Provider; explicitProject?: boolean }): ServerInstance {
   const app = express();
   const db = getDb();
   const eventStore = new EventStore(2000);
@@ -34,11 +34,21 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
   const otelReceiver = new OtelReceiver(eventStore, metricsStore);
   const tokenStore = new TokenStore();
 
-  // Prepared statements for usage table
+  // Prepared statements
   const upsertUsage = db.prepare('INSERT OR REPLACE INTO usage (session_id, data, received_at) VALUES (?, ?, ?)');
   const selectUsage = db.prepare('SELECT * FROM usage ORDER BY received_at DESC');
+  const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
+  const setSetting = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+
+  // Resolve initial project: CLI explicit > DB saved > CLI default
   let currentProject = projectRoot;
-  let provider = initialProvider;
+  if (!explicitProject) {
+    const saved = getSetting.get('projectPath') as { value: string } | undefined;
+    if (saved && fs.existsSync(saved.value)) {
+      currentProject = saved.value;
+    }
+  }
+  let provider = explicitProject ? initialProvider : detectProvider({ projectRoot: currentProject });
   const sessionWatcher = new SessionWatcher(provider, currentProject, 5000);
 
   app.use(express.json());
@@ -78,6 +88,7 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
     }
     const resolved = path.resolve(projectPath);
     currentProject = resolved;
+    setSetting.run('projectPath', resolved);
     provider = detectProvider({ projectRoot: resolved });
     sessionWatcher.provider = provider;
     sessionWatcher.setProjectFilter(resolved);

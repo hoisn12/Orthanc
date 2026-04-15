@@ -13,6 +13,7 @@ function getArg(name: string, defaultValue: string): string {
 }
 
 const port = parseInt(getArg('--port', '7432'), 10);
+const explicitProject = args.includes('--project');
 const projectRoot = path.resolve(getArg('--project', process.cwd()));
 const providerFlag = getArg('--provider', 'auto');
 const shouldInstallHooks = args.includes('--install-hooks');
@@ -52,7 +53,7 @@ if (shouldInstallHooks) {
   }
 }
 
-const { start, stop } = createServer({ projectRoot, port, provider });
+const { start, stop } = createServer({ projectRoot, port, provider, explicitProject });
 
 start().then(() => {
   const url = `http://localhost:${port}`;
