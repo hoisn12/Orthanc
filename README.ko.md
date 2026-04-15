@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green.svg)](https://nodejs.org/)
 
-> **Warning**
+> [!WARNING]
 > Codex CLI 지원은 아직 사용할 수 없습니다. 현재 Claude Code만 지원됩니다.
 
 **Claude Code & Codex CLI 세션을 실시간으로 모니터링하는 경량 웹 대시보드.**
