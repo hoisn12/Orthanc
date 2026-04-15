@@ -16,19 +16,24 @@
         │               │                  │
         ▼               ▼                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Express Server (src/server.js)                          port 7432  │
+│  Express Server (src/server.ts)                          port 7432  │
 │                                                                     │
 │  POST /api/events/:type ──▶ EventStore                              │
 │  POST /v1/{logs,metrics,traces} ──▶ OtelReceiver ──▶ EventStore     │
 │                                              └──────▶ MetricsStore  │
 │  POST /api/statusline ──▶ SQLite (usage table)                      │
+│  POST /api/project ──▶ Provider 재감지 + 프로젝트 전환              │
 │                                                                     │
+│  GET  /api/provider ──▶ 현재 Provider 정보                          │
 │  GET  /api/events/stream ──▶ SSE (EventStore.subscribe)             │
 │  GET  /api/config ──▶ Provider.parseProjectConfig                   │
 │  GET  /api/sessions ──▶ SessionWatcher                              │
+│  GET  /api/sessions/:pid/config ──▶ 세션별 프로젝트 설정            │
 │  GET  /api/tokens ──▶ TokenStore (SQLite 집계 쿼리)                  │
 │  GET  /api/metrics/* ──▶ MetricsStore                               │
 │  GET  /api/usage ──▶ SQLite (usage table)                           │
+│  GET  /api/file ──▶ .md 파일 읽기 (Provider 보안 검증)              │
+│  GET  /api/directories ──▶ 디렉토리 탐색                            │
 │  GET  /api/hooks/status ──▶ Provider.getMonitorStatus               │
 │  POST /api/hooks/install ──▶ Provider.installHooks (컴포넌트별)      │
 │  POST /api/hooks/uninstall ──▶ Provider.uninstallHooks (컴포넌트별)  │
@@ -51,27 +56,28 @@
 
 ```
 bin/
-  cli.js              # CLI 엔트리포인트 (args 파싱, 서버 시작)
+  cli.ts              # CLI 엔트리포인트 (args 파싱, 서버 시작)
   statusline.sh       # Statusline 스크립트 (Claude Code → monitor 서버로 POST)
 
 src/
-  server.js           # Express 서버, 모든 라우트 정의
-  db.js               # SQLite (better-sqlite3) 초기화, 스키마 관리
-  event-store.js      # 순환 버퍼 (max 2000) + pub-sub SSE 전달
-  session-watcher.js  # 세션 디렉토리 폴링, PID 생존 확인
-  config-parser.js    # Provider 위임 wrapper
-  hook-installer.js   # Provider 위임 wrapper + CLI 모드
-  token-tracker.js    # JSONL 세션 로그 → 토큰 사용량/비용 집계 (레거시 인메모리)
-  token-store.js      # SQLite 기반 토큰 사용량 저장/집계 쿼리
-  token-sync.js       # JSONL → SQLite 증분 동기화 (byte-offset 추적)
-  jsonl-watcher.js    # 활성 세션 JSONL 실시간 파싱 (assistant 스트리밍 + 토큰 upsert)
-  metrics-store.js    # 실시간 메트릭 인메모리 저장 (latency, cost, tool stats)
-  otel-receiver.js    # OTLP HTTP/JSON 파서 → EventStore + MetricsStore
+  server.ts           # Express 서버, 모든 라우트 정의
+  db.ts               # SQLite (better-sqlite3) 초기화, 스키마 관리
+  types.ts            # 공유 TypeScript 타입/인터페이스 정의
+  event-store.ts      # 순환 버퍼 (max 2000) + pub-sub SSE 전달
+  session-watcher.ts  # 세션 디렉토리 폴링, PID 생존 확인
+  config-parser.ts    # Provider 위임 wrapper
+  hook-installer.ts   # Provider 위임 wrapper + CLI 모드
+  token-tracker.ts    # JSONL 세션 로그 → 토큰 사용량/비용 집계 (레거시 인메모리)
+  token-store.ts      # SQLite 기반 토큰 사용량 저장/집계 쿼리
+  token-sync.ts       # JSONL → SQLite 증분 동기화 (byte-offset 추적)
+  jsonl-watcher.ts    # 활성 세션 JSONL 실시간 파싱 (assistant 스트리밍 + 토큰 upsert)
+  metrics-store.ts    # 실시간 메트릭 인메모리 저장 (latency, cost, tool stats)
+  otel-receiver.ts    # OTLP HTTP/JSON 파서 → EventStore + MetricsStore
   providers/
-    provider.js       # Provider 추상 베이스 클래스
-    registry.js       # Provider auto-detection + factory
-    claude-provider.js # Claude Code 어댑터
-    codex-provider.js  # Codex CLI 어댑터
+    provider.ts       # Provider 추상 베이스 클래스
+    registry.ts       # Provider auto-detection + factory
+    claude-provider.ts # Claude Code 어댑터
+    codex-provider.ts  # Codex CLI 어댑터
 
 public/
   index.html          # SPA 셸 (4페이지 nav)
@@ -82,16 +88,17 @@ data/
   monitor.db          # SQLite DB (런타임 생성, gitignore 대상)
 
 test/
-  event-store.test.js
-  config-parser.test.js
-  provider.test.js
-  otel-receiver.test.js
-  metrics-store.test.js
+  test-db.ts              # 테스트용 DB 헬퍼
+  event-store.test.ts
+  config-parser.test.ts
+  provider.test.ts
+  otel-receiver.test.ts
+  metrics-store.test.ts
 ```
 
 ## 핵심 모듈 상세
 
-### Provider 시스템 (`src/providers/`)
+### Provider 시스템 (`src/providers/`; TypeScript)
 
 Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클래스가 인터페이스를 정의하고, `ClaudeProvider`와 `CodexProvider`가 구현체다.
 
@@ -101,7 +108,7 @@ Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클
 | 훅 관리   | `getHookEvents()`, `installHooks(root, port, options)`, `uninstallHooks(root, options)` |
 | 훅 상태   | `getMonitorStatus(root)` → `{ hooks, otel, statusline }`                                |
 | 설정 파싱 | `getConfigDirName()`, `parseProjectConfig()`                                            |
-| 토큰 추적 | `getProjectsDir()`, `getTokenPricing()`, `parseUsageRecord()`                           |
+| 토큰 추적 | `getProjectsDir()`, `getTokenPricing()`, `getDefaultPricing()`, `parseUsageRecord()`    |
 | 보안      | `isFileReadAllowed()`                                                                   |
 
 `installHooks`/`uninstallHooks`는 `options` 파라미터로 **3가지 컴포넌트를 개별 제어**:
@@ -110,7 +117,7 @@ Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클
 - `otel`: OpenTelemetry 텔레메트리 환경변수
 - `statusline`: Statusline 스크립트 설정
 
-`registry.js`의 `detectProvider()`가 자동 감지 로직을 수행:
+`registry.ts`의 `detectProvider()`가 자동 감지 로직을 수행:
 
 1. 명시적 `--provider` 플래그
 2. 프로젝트에 `.codex/` 존재 → Codex
@@ -140,7 +147,7 @@ Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클
 
 ### 데이터 저장 (SQLite)
 
-`src/db.js`가 `data/monitor.db`를 관리. WAL 모드 + busy_timeout 설정.
+`src/db.ts`가 `data/monitor.db`를 관리. WAL 모드 + busy_timeout 설정.
 
 **테이블:**
 | 테이블 | 용도 |
@@ -150,48 +157,48 @@ Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클
 | `token_usage` | JSONL 파싱 토큰 사용량 (메시지 단위, 모델별 집계 가능) |
 | `token_sync_state` | JSONL 증분 동기화 상태 (file_path → byte_offset) |
 
-### EventStore (`src/event-store.js`)
+### EventStore (`src/event-store.ts`)
 
 - 고정 크기 순환 버퍼 (기본 2000개)
 - `add()` → 이벤트 저장 + 모든 subscriber에 실시간 전달
 - `subscribe()` → SSE 연결에 사용, unsubscribe 콜백 반환
 - ID: `timestamp-randomSuffix` 형태
 
-### TokenStore (`src/token-store.js`)
+### TokenStore (`src/token-store.ts`)
 
 - SQLite 기반 토큰 사용량 저장소
 - `upsert()` / `bulkUpsert()` — 메시지 단위 레코드 저장
 - `queryAggregated()` — totals, byModel, hourly, sessions, recent24h 집계를 SQL로 수행
 - 증분 동기화 상태 관리 (`getSyncState` / `setSyncState`)
 
-### TokenSync (`src/token-sync.js`)
+### TokenSync (`src/token-sync.ts`)
 
 - `syncAll()` — 프로젝트의 모든 JSONL 파일을 DB에 증분 동기화
 - byte-offset 추적으로 이전에 파싱한 부분은 건너뜀
 - 서버 시작 시 초기 동기화 실행
 
-### JsonlWatcher (`src/jsonl-watcher.js`)
+### JsonlWatcher (`src/jsonl-watcher.ts`)
 
 - 활성 세션의 JSONL 파일을 1초 간격으로 폴링
 - 새로운 assistant 메시지를 `assistant-streaming` 이벤트로 EventStore에 전달
 - 동시에 token usage를 TokenStore에 실시간 upsert
 - 세션 종료 시 자동 정리
 
-### MetricsStore (`src/metrics-store.js`)
+### MetricsStore (`src/metrics-store.ts`)
 
 - 시간 윈도우 기반 인메모리 집계 (기본 1시간 retention)
 - 3가지 데이터 시리즈: `apiCalls`, `toolExecutions`, `apiErrors`
 - 제공 통계: latency percentiles (p50/p95/p99), cost timeline, tool별 stats, model breakdown, error rate
 - `_prune()`로 오래된 데이터 자동 제거
 
-### SessionWatcher (`src/session-watcher.js`)
+### SessionWatcher (`src/session-watcher.ts`)
 
 - `~/.claude/sessions/` (또는 `~/.codex/sessions/`) 폴링 (5초 간격)
 - `process.kill(pid, 0)`으로 프로세스 생존 확인
 - 프로젝트 경로 필터링 지원 (`setProjectFilter()`)
 - dead 세션 자동 정리
 
-### OtelReceiver (`src/otel-receiver.js`)
+### OtelReceiver (`src/otel-receiver.ts`)
 
 - OTLP HTTP/JSON 3가지 시그널 수신: logs, metrics, traces
 - `flattenAttributes()`로 OTLP attribute 배열 → flat object 변환
@@ -234,6 +241,7 @@ SPA 방식의 4페이지 구성 (라우터 없음, DOM 토글):
 | 항목        | 선택                                               |
 | ----------- | -------------------------------------------------- |
 | Runtime     | Node.js >= 20                                      |
+| Language    | TypeScript (ESM, `tsc`로 `dist/`에 빌드)           |
 | Framework   | Express 5                                          |
 | Module      | ESM (`"type": "module"`)                           |
 | DB          | SQLite (better-sqlite3, WAL mode)                  |
