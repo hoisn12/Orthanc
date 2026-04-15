@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { DbInstance } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 
 let _db: DbInstance | null = null;
 

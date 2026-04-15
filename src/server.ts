@@ -42,8 +42,8 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
   const sessionWatcher = new SessionWatcher(provider, currentProject, 5000);
 
   app.use(express.json());
-  app.use(express.static(path.join(__dirname, '..', 'public')));
-  app.use('/vendor', express.static(path.join(__dirname, '..', 'node_modules', 'marked', 'lib')));
+  app.use(express.static(path.join(__dirname, '..', '..', 'public')));
+  app.use('/vendor', express.static(path.join(__dirname, '..', '..', 'node_modules', 'marked', 'lib')));
 
   // --- REST API ---
 
