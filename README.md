@@ -37,9 +37,9 @@ npm start
 
 The dashboard opens automatically at `http://localhost:7432`.
 
-### Using the `orthanc` CLI command
+### (Optional) Using the `orthanc` CLI command
 
-To use `orthanc` as a global command:
+To use `orthanc` as a global command instead of `npm start`:
 
 ```bash
 # Register the CLI globally (run from project root)
