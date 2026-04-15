@@ -3,6 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green.svg)](https://nodejs.org/)
 
+> **Warning**
+> Codex CLI 지원은 아직 사용할 수 없습니다. 현재 Claude Code만 지원됩니다.
+
 **Claude Code & Codex CLI 세션을 실시간으로 모니터링하는 경량 웹 대시보드.**
 
 Orthanc는 실행 중인 Claude Code / Codex CLI 프로세스에서 Hook 이벤트, OpenTelemetry 텔레메트리, Statusline 데이터를 수집하고, SQLite에 저장하며, SSE를 통해 브라우저 대시보드로 스트리밍합니다.

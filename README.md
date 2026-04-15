@@ -3,6 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green.svg)](https://nodejs.org/)
 
+> **Warning**
+> Codex CLI support is not yet available. Currently only Claude Code is supported.
+
 **Lightweight web dashboard for monitoring Claude Code & Codex CLI sessions in real time.**
 
 Orthanc collects Hook events, OpenTelemetry telemetry, and Statusline data from running Claude Code / Codex CLI processes, stores them in SQLite, and streams everything to a browser dashboard via SSE.
