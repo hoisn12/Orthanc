@@ -33,14 +33,33 @@ npm install
 
 # 서버 시작 (기본 포트 7432)
 npm start
-
-# 옵션 지정
-node dist/bin/cli.js --port 8080
-node dist/bin/cli.js --install-hooks
-node dist/bin/cli.js --project /path/to/your/project
 ```
 
 대시보드가 자동으로 `http://localhost:7432`에서 열립니다.
+
+### `orthanc` CLI 명령어 사용
+
+글로벌 명령어로 등록하여 어디서든 사용할 수 있습니다:
+
+```bash
+# CLI 글로벌 등록 (프로젝트 루트에서 실행)
+npm link
+
+# 이제 어디서든 사용 가능
+orthanc
+orthanc --port 8080
+orthanc --install-hooks
+orthanc --project /path/to/your/project
+
+# 등록 해제
+npm unlink -g orthanc
+```
+
+글로벌 등록 없이 직접 실행할 수도 있습니다:
+
+```bash
+node dist/bin/cli.js --port 8080
+```
 
 ## 설정
 

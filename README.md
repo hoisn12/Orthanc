@@ -33,14 +33,33 @@ npm install
 
 # Start the server (default port 7432)
 npm start
-
-# Or with options
-node dist/bin/cli.js --port 8080
-node dist/bin/cli.js --install-hooks
-node dist/bin/cli.js --project /path/to/your/project
 ```
 
 The dashboard opens automatically at `http://localhost:7432`.
+
+### Using the `orthanc` CLI command
+
+To use `orthanc` as a global command:
+
+```bash
+# Register the CLI globally (run from project root)
+npm link
+
+# Now you can use it from anywhere
+orthanc
+orthanc --port 8080
+orthanc --install-hooks
+orthanc --project /path/to/your/project
+
+# To unregister
+npm unlink -g orthanc
+```
+
+Or run directly without global install:
+
+```bash
+node dist/bin/cli.js --port 8080
+```
 
 ## Setup
 
