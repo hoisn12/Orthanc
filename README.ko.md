@@ -89,14 +89,19 @@ Browser Dashboard (4페이지)
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
+| GET | `/api/provider` | 현재 프로바이더 정보 |
 | GET | `/api/config` | 프로젝트 설정 (skills, agents, rules, hooks, env) |
 | GET | `/api/sessions` | 활성 CLI 세션 목록 |
+| GET | `/api/sessions/:pid/config` | 세션별 프로젝트 설정 |
 | GET | `/api/events?limit=50` | 최근 이벤트 |
 | GET | `/api/events/stream` | SSE 실시간 이벤트 스트림 |
 | GET | `/api/tokens` | 토큰 사용량 집계 통계 |
 | GET | `/api/metrics/*` | 실시간 OTel 메트릭 |
 | GET | `/api/usage` | Statusline 사용량 데이터 |
+| GET | `/api/file` | .md 파일 읽기 (Provider 보안 검증) |
+| GET | `/api/directories` | 디렉토리 탐색 |
 | GET | `/api/hooks/status` | 모니터 컴포넌트 설치 상태 |
+| POST | `/api/project` | 프로젝트 전환 (DB에 저장) |
 | POST | `/api/events/:type` | CLI 훅에서 이벤트 수신 |
 | POST | `/api/hooks/install` | 모니터 훅 설치 |
 | POST | `/api/hooks/uninstall` | 모니터 훅 제거 |

@@ -89,14 +89,19 @@ For the full architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/api/provider` | Current provider info |
 | GET | `/api/config` | Project configuration (skills, agents, rules, hooks, env) |
 | GET | `/api/sessions` | Active CLI session list |
+| GET | `/api/sessions/:pid/config` | Per-session project configuration |
 | GET | `/api/events?limit=50` | Recent events |
 | GET | `/api/events/stream` | SSE real-time event stream |
 | GET | `/api/tokens` | Token usage aggregated stats |
 | GET | `/api/metrics/*` | Real-time OTel metrics |
 | GET | `/api/usage` | Statusline usage data |
+| GET | `/api/file` | Read .md files (provider-scoped security) |
+| GET | `/api/directories` | Directory browser |
 | GET | `/api/hooks/status` | Monitor component install status |
+| POST | `/api/project` | Switch project (persisted to DB) |
 | POST | `/api/events/:type` | Receive events from CLI hooks |
 | POST | `/api/hooks/install` | Install monitor hooks |
 | POST | `/api/hooks/uninstall` | Uninstall monitor hooks |

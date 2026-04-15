@@ -22,7 +22,7 @@
 │  POST /v1/{logs,metrics,traces} ──▶ OtelReceiver ──▶ EventStore     │
 │                                              └──────▶ MetricsStore  │
 │  POST /api/statusline ──▶ SQLite (usage table)                      │
-│  POST /api/project ──▶ Provider 재감지 + 프로젝트 전환              │
+│  POST /api/project ──▶ Provider 재감지 + 프로젝트 전환 + DB 저장    │
 │                                                                     │
 │  GET  /api/provider ──▶ 현재 Provider 정보                          │
 │  GET  /api/events/stream ──▶ SSE (EventStore.subscribe)             │
@@ -156,6 +156,7 @@ Strategy 패턴으로 CLI별 차이를 추상화한다. `Provider` 베이스 클
 | `usage` | Statusline 실시간 사용량 (session_id → JSON data) |
 | `token_usage` | JSONL 파싱 토큰 사용량 (메시지 단위, 모델별 집계 가능) |
 | `token_sync_state` | JSONL 증분 동기화 상태 (file_path → byte_offset) |
+| `settings` | key-value 설정 저장 (프로젝트 경로 등, 재시작 시 복원) |
 
 ### EventStore (`src/event-store.ts`)
 
