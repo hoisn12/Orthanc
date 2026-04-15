@@ -42,6 +42,30 @@ node dist/bin/cli.js --project /path/to/your/project
 
 The dashboard opens automatically at `http://localhost:7432`.
 
+## Setup
+
+After launching the server, open the **Settings** page in the dashboard to configure monitoring.
+
+### 1. Set Project Path
+
+Click **Browse...** next to "Project Path" to select the project directory you want to monitor. This setting is persisted in the database and restored on restart.
+
+### 2. Install Monitor Components
+
+Under "Monitor Components", install the data collection channels you need:
+
+| Component | Description | Data Collected |
+|-----------|-------------|----------------|
+| **HTTP Hooks** | Hook event POST to monitor server | Session lifecycle, tool use, prompts, notifications |
+| **OpenTelemetry** | OTLP HTTP/JSON telemetry export | API latency, cost, tool execution stats |
+| **Statusline** | Realtime usage script | Model name, cost, context usage, rate limits |
+
+You can install each component individually or use **Install All** to enable everything at once.
+
+### 3. Verify
+
+Switch to the **Monitor** page to confirm events are flowing in the Activity Feed.
+
 ## CLI Options
 
 ```
