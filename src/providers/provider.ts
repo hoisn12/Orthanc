@@ -88,4 +88,48 @@ export abstract class Provider {
         basename === 'ARCHITECTURE.md')
     );
   }
+
+  /** Check if a resolved file path is allowed to be written via the API */
+  isFileWriteAllowed(resolvedPath: string, projectRoot: string): boolean {
+    if (resolvedPath !== path.resolve(resolvedPath)) return false;
+    if (!resolvedPath.endsWith('.md')) return false;
+
+    const configDir = path.join(projectRoot, this.getConfigDirName()) + '/';
+    if (resolvedPath.startsWith(configDir)) return true;
+
+    const basename = path.basename(resolvedPath);
+    if (basename === 'CLAUDE.md') {
+      const parentDir = path.dirname(projectRoot);
+      return resolvedPath.startsWith(parentDir);
+    }
+
+    return false;
+  }
+
+  // ── CRUD ──────────────────────────────────────────────────
+
+  /** Write content to an allowed .md file */
+  writeFile(_filePath: string, _content: string, _projectRoot: string): void {
+    throw new Error('not implemented');
+  }
+
+  createSkill(
+    _projectRoot: string,
+    _name: string,
+    _opts?: { description?: string; userInvocable?: boolean; content?: string },
+  ): void {
+    throw new Error('not implemented');
+  }
+
+  updateSkill(
+    _projectRoot: string,
+    _name: string,
+    _opts?: { description?: string; userInvocable?: boolean; content?: string },
+  ): void {
+    throw new Error('not implemented');
+  }
+
+  deleteSkill(_projectRoot: string, _name: string): void {
+    throw new Error('not implemented');
+  }
 }

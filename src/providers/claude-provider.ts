@@ -37,15 +37,7 @@ const HOOK_EVENTS: string[] = [
 ];
 
 const MAX_DEPTH = 5;
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  'build',
-  '.next',
-  'vendor',
-  '__pycache__',
-]);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'vendor', '__pycache__']);
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-6': { input: 15, output: 75, cache_read: 1.5, cache_create: 18.75 },
@@ -286,10 +278,7 @@ export class ClaudeProvider extends Provider {
     }
 
     if (statusline) {
-      if (
-        settings.statusLine?._marker === MONITOR_MARKER ||
-        settings.statusLine?.command?.includes('statusline.sh')
-      ) {
+      if (settings.statusLine?._marker === MONITOR_MARKER || settings.statusLine?.command?.includes('statusline.sh')) {
         delete settings.statusLine;
       }
     }
@@ -409,17 +398,17 @@ export class ClaudeProvider extends Provider {
 
   // ── CRUD ──────────────────────────────────────────────────
 
-  writeFile(filePath, content, projectRoot) {
+  writeFile(filePath: string, content: string, projectRoot: string): void {
     const resolved = path.resolve(filePath);
     if (!this.isFileWriteAllowed(resolved, projectRoot)) {
-      const err = new Error('Write not allowed: ' + filePath);
+      const err: NodeJS.ErrnoException = new Error('Write not allowed: ' + filePath);
       err.code = 'EPERM';
       throw err;
     }
     fs.writeFileSync(resolved, content);
   }
 
-  createSkill(projectRoot, name, { description = '', userInvocable = false, content = '' } = {}) {
+  createSkill(projectRoot: string, name: string, { description = '', userInvocable = false, content = '' } = {}): void {
     validateName(name);
     const skillDir = path.join(projectRoot, '.claude', 'skills', name);
     if (fs.existsSync(skillDir)) throw new Error(`Skill "${name}" already exists`);
@@ -428,16 +417,18 @@ export class ClaudeProvider extends Provider {
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), body);
   }
 
-  updateSkill(projectRoot, name, { description, userInvocable, content } = {}) {
+  updateSkill(
+    projectRoot: string,
+    name: string,
+    { description, userInvocable, content }: { description?: string; userInvocable?: boolean; content?: string } = {},
+  ): void {
     validateName(name);
     const skillMd = path.join(projectRoot, '.claude', 'skills', name, 'SKILL.md');
     if (!fs.existsSync(skillMd)) throw new Error(`Skill "${name}" not found`);
 
     if (content !== undefined) {
-      // Full content provided — write as-is
       fs.writeFileSync(skillMd, content);
     } else {
-      // Partial update — rebuild frontmatter
       const existing = parseFrontmatterAndBody(fs.readFileSync(skillMd, 'utf-8'));
       const fm = existing.frontmatter;
       if (description !== undefined) fm.description = description;
@@ -451,7 +442,7 @@ export class ClaudeProvider extends Provider {
     }
   }
 
-  deleteSkill(projectRoot, name) {
+  deleteSkill(projectRoot: string, name: string): void {
     validateName(name);
     const skillDir = path.join(projectRoot, '.claude', 'skills', name);
     if (!fs.existsSync(skillDir)) throw new Error(`Skill "${name}" not found`);
@@ -903,12 +894,20 @@ function kebab(str: string): string {
   return str.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 }
 
-function validateName(name) {
+function validateName(name: string): void {
   if (!name || typeof name !== 'string') throw new Error('Name is required');
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('Name must only contain letters, numbers, hyphens, underscores');
 }
 
-function buildSkillMd({ description = '', userInvocable = false, content = '' }) {
+function buildSkillMd({
+  description = '',
+  userInvocable = false,
+  content = '',
+}: {
+  description?: string;
+  userInvocable?: boolean;
+  content?: string;
+}): string {
   const lines = ['---'];
   if (description) lines.push(`description: "${description}"`);
   lines.push(`user_invocable: ${userInvocable}`);
@@ -918,16 +917,19 @@ function buildSkillMd({ description = '', userInvocable = false, content = '' })
   return lines.join('\n');
 }
 
-function parseFrontmatterAndBody(text) {
+function parseFrontmatterAndBody(text: string): { frontmatter: Record<string, string>; body: string } {
   const match = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!match) return { frontmatter: {}, body: text };
-  const fm = {};
-  for (const line of match[1].split('\n')) {
+  const fm: Record<string, string> = {};
+  for (const line of match[1]!.split('\n')) {
     const idx = line.indexOf(':');
     if (idx === -1) continue;
     const key = line.slice(0, idx).trim();
-    const val = line.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+    const val = line
+      .slice(idx + 1)
+      .trim()
+      .replace(/^["']|["']$/g, '');
     fm[key] = val;
   }
-  return { frontmatter: fm, body: match[2] };
+  return { frontmatter: fm, body: match[2] ?? '' };
 }

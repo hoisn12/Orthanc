@@ -26,7 +26,17 @@ interface ServerInstance {
   stop: () => void;
 }
 
-export function createServer({ projectRoot, port = 7432, provider: initialProvider, explicitProject = true }: { projectRoot: string; port?: number; provider: Provider; explicitProject?: boolean }): ServerInstance {
+export function createServer({
+  projectRoot,
+  port = 7432,
+  provider: initialProvider,
+  explicitProject = true,
+}: {
+  projectRoot: string;
+  port?: number;
+  provider: Provider;
+  explicitProject?: boolean;
+}): ServerInstance {
   const app = express();
   const db = getDb();
   const eventStore = new EventStore(2000);
@@ -239,7 +249,7 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
       config.projectRoot = currentProject;
       config.projectName = path.basename(currentProject);
       res.json({ ok: true, config });
-    } catch (err) {
+    } catch (err: any) {
       res.status(err.code === 'EPERM' ? 403 : 500).json({ error: err.message });
     }
   });
@@ -254,7 +264,7 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
       config.projectRoot = currentProject;
       config.projectName = path.basename(currentProject);
       res.json({ ok: true, config });
-    } catch (err) {
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -267,7 +277,7 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
       config.projectRoot = currentProject;
       config.projectName = path.basename(currentProject);
       res.json({ ok: true, config });
-    } catch (err) {
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -279,7 +289,7 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
       config.projectRoot = currentProject;
       config.projectName = path.basename(currentProject);
       res.json({ ok: true, config });
-    } catch (err) {
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -344,7 +354,7 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
   app.get('/api/usage', (_req: Request, res: Response) => {
     const rows = selectUsage.all() as { data: string; received_at: number }[];
     const entries = rows.map((r) => ({
-      ...JSON.parse(r.data) as Record<string, unknown>,
+      ...(JSON.parse(r.data) as Record<string, unknown>),
       _receivedAt: r.received_at,
     }));
     res.json(entries);
