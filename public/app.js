@@ -76,6 +76,23 @@ function connectSSE() {
   const source = new EventSource('/api/events/stream');
   source.onmessage = (e) => {
     const event = JSON.parse(e.data);
+
+    // Drop assistant-streaming if this turn already has a stop with the final message
+    if (event.type === 'assistant-streaming' && event.pid) {
+      const pid = event.pid;
+      let hasStop = false;
+      for (let i = state.events.length - 1; i >= 0; i--) {
+        const ev = state.events[i];
+        if (ev.pid !== pid) continue;
+        if (ev.type === 'stop' && ev.payload?.last_assistant_message) {
+          hasStop = true;
+          break;
+        }
+        if (ev.type === 'user-prompt-submit') break;
+      }
+      if (hasStop) return;
+    }
+
     state.events.push(event);
     if (state.events.length > 500) state.events.shift();
     processEvent(event);
