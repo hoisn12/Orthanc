@@ -719,18 +719,17 @@ body {
   font-family: inherit;
   font-size: 11px;
   padding: 3px 10px;
-  border: none;
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   color: var(--text-primary);
+  background: var(--bg-card);
 }
 
-.btn-install {
-  background: var(--accent-dim);
-}
-.btn-install:hover {
-  background: var(--accent);
-}
+.btn-sm:hover { background: var(--bg-hover); }
+
+.btn-install { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+.btn-install:hover { background: var(--accent); border-color: var(--accent); }
 
 .btn-uninstall {
   background: var(--bg-card);
@@ -1642,7 +1641,7 @@ body {
   border-radius: 10px;
   width: 90%;
   max-width: 720px;
-  max-height: 80vh;
+  height: 80vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -1683,6 +1682,7 @@ body {
 .modal-body {
   padding: 16px;
   overflow-y: auto;
+  flex: 1 1 auto;
   font-size: 12px;
   line-height: 1.7;
   color: var(--text-secondary);
@@ -1780,6 +1780,105 @@ body {
   background: var(--bg-hover);
   border-radius: 4px;
 }
+
+/* ========== Modal Editor ========== */
+.modal-wide { max-width: 900px; }
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modal-editor {
+  display: block;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 300px;
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: none;
+  border-top: 1px solid var(--border);
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.modal-frontmatter {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.modal-frontmatter label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.modal-frontmatter input[type="text"] {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 200px;
+}
+
+.modal-frontmatter input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.modal-frontmatter input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* Create button in section headers */
+.btn-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  margin-left: 6px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.btn-create:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Card action buttons */
+.card-delete {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+  margin-left: auto;
+  transition: opacity 0.15s;
+}
+
+.harness-card:hover .card-delete { opacity: 1; }
+.card-delete:hover { color: var(--red); }
 
 /* ========== Live Usage (Statusline) ========== */
 .usage-grid {

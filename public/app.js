@@ -9,7 +9,6 @@ const state = {
   events: [],
   subagents: new Map(),
   tokens: null,
-  hideMonitorHooks: false,
   filterPid: null,
   lastActivity: new Map(),
   provider: null, // { name, displayName, hookEvents, configDir, available }
@@ -610,17 +609,36 @@ function extractDetail(event) {
 }
 
 // ============================================================
-// File Viewer Modal
+// File Viewer / Editor Modal
 // ============================================================
 
-async function openFileViewer(filePath) {
+const modalState = { filePath: null, type: null, name: null, originalContent: '', editing: false };
+
+async function openFileViewer(filePath, { type, name } = {}) {
   if (!filePath) return;
   const modal = document.getElementById('fileModal');
   const title = document.getElementById('modalTitle');
   const body = document.getElementById('modalBody');
+  const editor = document.getElementById('modalEditor');
+  const editBtn = document.getElementById('modalEditBtn');
+  const saveBtn = document.getElementById('modalSaveBtn');
+  const cancelBtn = document.getElementById('modalCancelBtn');
+  const fmDiv = document.getElementById('modalFrontmatter');
+
+  modalState.filePath = filePath;
+  modalState.type = type || null;
+  modalState.name = name || null;
+  modalState.editing = false;
 
   title.textContent = filePath;
   body.textContent = 'Loading...';
+  body.style.display = '';
+  editor.style.display = 'none';
+  editBtn.style.display = 'none';
+  saveBtn.style.display = 'none';
+  cancelBtn.style.display = 'none';
+  fmDiv.style.display = 'none';
+  fmDiv.innerHTML = '';
   modal.style.display = 'flex';
 
   try {
@@ -628,6 +646,8 @@ async function openFileViewer(filePath) {
     const data = await res.json();
     if (res.ok) {
       body.textContent = data.content;
+      modalState.originalContent = data.content;
+      editBtn.style.display = '';
     } else {
       body.textContent = `Error: ${data.error}`;
     }
@@ -636,106 +656,180 @@ async function openFileViewer(filePath) {
   }
 }
 
-function initModalHandlers() {
-  const modal = document.getElementById('fileModal');
-  document.getElementById('modalClose').addEventListener('click', () => {
-    modal.style.display = 'none';
-  });
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) modal.style.display = 'none';
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      const fp = document.getElementById('folderPickerModal');
-      if (fp && fp.style.display !== 'none') {
-        fp.style.display = 'none';
-        return;
-      }
-      modal.style.display = 'none';
-    }
-  });
+function enterEditMode() {
+  const body = document.getElementById('modalBody');
+  const editor = document.getElementById('modalEditor');
+  const editBtn = document.getElementById('modalEditBtn');
+  const saveBtn = document.getElementById('modalSaveBtn');
+  const cancelBtn = document.getElementById('modalCancelBtn');
+
+  editor.value = modalState.originalContent;
+  body.style.display = 'none';
+  editor.style.display = '';
+  editBtn.style.display = 'none';
+  saveBtn.style.display = '';
+  cancelBtn.style.display = '';
+  modalState.editing = true;
+  editor.focus();
 }
 
-// ============================================================
-// Folder Picker
-// ============================================================
+function exitEditMode() {
+  const body = document.getElementById('modalBody');
+  const editor = document.getElementById('modalEditor');
+  const editBtn = document.getElementById('modalEditBtn');
+  const saveBtn = document.getElementById('modalSaveBtn');
+  const cancelBtn = document.getElementById('modalCancelBtn');
 
-let _fpCurrentPath = '';
-let _fpParentPath = '';
-
-function openFolderPicker(initialPath) {
-  const modal = document.getElementById('folderPickerModal');
-  modal.style.display = 'flex';
-  document.getElementById('folderPickerPathInput').value = initialPath || '/';
-  loadDirectories(initialPath || '/');
+  body.style.display = '';
+  editor.style.display = 'none';
+  editBtn.style.display = '';
+  saveBtn.style.display = 'none';
+  cancelBtn.style.display = 'none';
+  modalState.editing = false;
 }
 
-function closeFolderPicker() {
-  document.getElementById('folderPickerModal').style.display = 'none';
-}
+async function saveModalFile() {
+  const editor = document.getElementById('modalEditor');
+  const saveBtn = document.getElementById('modalSaveBtn');
+  const content = editor.value;
 
-async function loadDirectories(dirPath) {
-  const listEl = document.getElementById('folderPickerList');
-  const pathInput = document.getElementById('folderPickerPathInput');
-  const upBtn = document.getElementById('folderPickerUp');
-  listEl.innerHTML = '<div class="folder-picker-empty">Loading...</div>';
+  saveBtn.textContent = 'Saving...';
+  saveBtn.disabled = true;
+
   try {
-    const res = await fetch(`/api/directories?path=${encodeURIComponent(dirPath)}`);
-    if (!res.ok) {
-      const err = await res.json();
-      listEl.innerHTML = `<div class="folder-picker-empty">${escapeHtml(err.error || 'Failed to load')}</div>`;
-      return;
-    }
-    const data = await res.json();
-    _fpCurrentPath = data.path;
-    _fpParentPath = data.parent;
-    pathInput.value = data.path;
-    upBtn.disabled = data.path === data.parent;
-
-    if (data.directories.length === 0) {
-      listEl.innerHTML = '<div class="folder-picker-empty">No subdirectories</div>';
-      return;
-    }
-    listEl.innerHTML = data.directories
-      .map((name) => `<div class="folder-picker-item" data-name="${escapeHtml(name)}">${escapeHtml(name)}</div>`)
-      .join('');
-    listEl.querySelectorAll('.folder-picker-item').forEach((item) => {
-      item.addEventListener('click', () => {
-        loadDirectories(_fpCurrentPath + '/' + item.dataset.name);
+    let res;
+    if (modalState.type === 'skill' && modalState.name) {
+      res = await fetch(`/api/skills/${encodeURIComponent(modalState.name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
       });
-    });
+    } else {
+      res = await fetch('/api/file', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: modalState.filePath, content }),
+      });
+    }
+
+    const data = await res.json();
+    if (res.ok && data.config) {
+      state.config = data.config;
+      renderHarness();
+      modalState.originalContent = content;
+      document.getElementById('modalBody').textContent = content;
+      exitEditMode();
+    } else {
+      alert('Save failed: ' + (data.error || 'Unknown error'));
+    }
   } catch (err) {
-    listEl.innerHTML = `<div class="folder-picker-empty">${escapeHtml(err.message)}</div>`;
+    alert('Save failed: ' + err.message);
+  } finally {
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = false;
   }
 }
 
-function initFolderPickerHandlers() {
-  const modal = document.getElementById('folderPickerModal');
-  const pathInput = document.getElementById('folderPickerPathInput');
-  document.getElementById('folderPickerClose').addEventListener('click', closeFolderPicker);
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) closeFolderPicker();
-  });
-  document.getElementById('folderPickerUp').addEventListener('click', () => {
-    if (_fpParentPath) loadDirectories(_fpParentPath);
-  });
-  document.getElementById('folderPickerGo').addEventListener('click', () => {
-    const val = pathInput.value.trim();
-    if (val) loadDirectories(val);
-  });
-  pathInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const val = pathInput.value.trim();
-      if (val) loadDirectories(val);
+function closeModal() {
+  document.getElementById('fileModal').style.display = 'none';
+  modalState.editing = false;
+}
+
+function initModalHandlers() {
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('fileModal').addEventListener('click', (e) => { if (e.target.id === 'fileModal') closeModal(); });
+  document.getElementById('modalEditBtn').addEventListener('click', enterEditMode);
+  document.getElementById('modalSaveBtn').addEventListener('click', saveModalFile);
+  document.getElementById('modalCancelBtn').addEventListener('click', exitEditMode);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+}
+
+// ============================================================
+// Create Skill Modal
+// ============================================================
+
+function openCreateSkillModal() {
+  const modal = document.getElementById('createModal');
+  const title = document.getElementById('createModalTitle');
+  const form = document.getElementById('createForm');
+  const editor = document.getElementById('createEditor');
+
+  title.textContent = 'New Skill';
+  form.innerHTML = `
+    <label>Name <input type="text" id="createSkillName" placeholder="my-skill"></label>
+    <label>Description <input type="text" id="createSkillDesc" placeholder="What this skill does"></label>
+    <label><input type="checkbox" id="createSkillInvocable"> User invocable</label>
+  `;
+  editor.value = '';
+  editor.style.display = '';
+  form.style.display = '';
+  modal.style.display = 'flex';
+
+  setTimeout(() => document.getElementById('createSkillName')?.focus(), 50);
+}
+
+async function saveCreateSkill() {
+  const name = document.getElementById('createSkillName')?.value?.trim();
+  const description = document.getElementById('createSkillDesc')?.value?.trim() || '';
+  const userInvocable = document.getElementById('createSkillInvocable')?.checked || false;
+  const content = document.getElementById('createEditor')?.value || '';
+  const btn = document.getElementById('createSaveBtn');
+
+  if (!name) { alert('Name is required'); return; }
+
+  btn.textContent = 'Creating...';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, userInvocable, content }),
+    });
+    const data = await res.json();
+    if (res.ok && data.config) {
+      state.config = data.config;
+      renderHarness();
+      closeCreateModal();
+    } else {
+      alert('Create failed: ' + (data.error || 'Unknown error'));
     }
-  });
-  document.getElementById('folderPickerSelect').addEventListener('click', async () => {
-    if (_fpCurrentPath) {
-      closeFolderPicker();
-      await switchProject(_fpCurrentPath);
+  } catch (err) {
+    alert('Create failed: ' + err.message);
+  } finally {
+    btn.textContent = 'Create';
+    btn.disabled = false;
+  }
+}
+
+function closeCreateModal() {
+  document.getElementById('createModal').style.display = 'none';
+}
+
+function initCreateModalHandlers() {
+  document.getElementById('createSaveBtn').addEventListener('click', saveCreateSkill);
+  document.getElementById('createCancelBtn').addEventListener('click', closeCreateModal);
+  document.getElementById('createModal').addEventListener('click', (e) => { if (e.target.id === 'createModal') closeCreateModal(); });
+}
+
+// ============================================================
+// Delete Skill
+// ============================================================
+
+async function deleteSkill(name) {
+  if (!confirm(`Delete skill "${name}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok && data.config) {
+      state.config = data.config;
+      renderHarness();
+    } else {
+      alert('Delete failed: ' + (data.error || 'Unknown error'));
     }
-  });
-  document.getElementById('folderPickerCancel').addEventListener('click', closeFolderPicker);
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
 }
 
 // ============================================================
@@ -799,21 +893,29 @@ function renderHarness() {
 
   // Attach file viewer click handlers (event delegation)
   el.addEventListener('click', (e) => {
+    // Delete skill button
+    const delBtn = e.target.closest('[data-delete-skill]');
+    if (delBtn) {
+      e.stopPropagation();
+      deleteSkill(delBtn.dataset.deleteSkill);
+      return;
+    }
+    // Create skill button
+    if (e.target.closest('#btnCreateSkill')) {
+      e.stopPropagation();
+      openCreateSkillModal();
+      return;
+    }
+    // File viewer with type context
     const target = e.target.closest('[data-file]');
-    if (target) openFileViewer(target.dataset.file);
+    if (target) {
+      openFileViewer(target.dataset.file, {
+        type: target.dataset.type || null,
+        name: target.dataset.name || null,
+      });
+    }
   });
 
-  // Monitor hooks toggle
-  const toggleBtn = el.querySelector('#toggleMonitorHooks');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', () => {
-      state.hideMonitorHooks = !state.hideMonitorHooks;
-      toggleBtn.textContent = state.hideMonitorHooks ? 'Show monitor hooks' : 'Hide monitor hooks';
-      el.querySelectorAll('.hook-flow-row.is-monitor').forEach((row) => {
-        row.style.display = state.hideMonitorHooks ? 'none' : '';
-      });
-    });
-  }
 }
 
 function harnessSection(title, content, collapsible = true) {
@@ -953,21 +1055,18 @@ function renderClaudeMd(c) {
 }
 
 function renderSkillsAgents(c) {
-  const skillsHTML =
-    c.skills.length > 0
-      ? c.skills
-          .map((s) => {
-            const badges = [];
-            if (s.userInvocable) badges.push('<span class="harness-badge badge-invocable">invocable</span>');
-            if (s.hasReferences) badges.push('<span class="harness-badge badge-refs">refs</span>');
-            if (s.symlink)
-              badges.push(
-                `<span class="harness-badge badge-symlink" title="${s.symlinkTarget || ''}">\u2192 symlink</span>`,
-              );
-            return `<div class="harness-card" ${s.filePath ? `data-file="${s.filePath}"` : ''}>
+  const skillsHTML = c.skills.length > 0
+    ? c.skills.map((s) => {
+        const badges = [];
+        if (s.userInvocable) badges.push('<span class="harness-badge badge-invocable">invocable</span>');
+        if (s.hasReferences) badges.push('<span class="harness-badge badge-refs">refs</span>');
+        if (s.symlink) badges.push(`<span class="harness-badge badge-symlink" title="${s.symlinkTarget || ''}">\u2192 symlink</span>`);
+        const canDelete = !s.symlink;
+        return `<div class="harness-card" ${s.filePath ? `data-file="${s.filePath}" data-type="skill" data-name="${s.name}"` : ''}>
           <div class="harness-card-name">
             <span style="width:6px;height:6px;border-radius:50%;background:${s.active ? 'var(--green)' : 'var(--text-muted)'};flex-shrink:0"></span>
             ${s.name}
+            ${canDelete ? `<button class="card-delete" data-delete-skill="${s.name}" title="Delete skill">\u2715</button>` : ''}
           </div>
           ${s.description ? `<div class="harness-card-desc">${s.description}</div>` : ''}
           ${badges.length ? `<div class="harness-card-meta">${badges.join('')}</div>` : ''}
@@ -997,7 +1096,7 @@ function renderSkillsAgents(c) {
       : '<span style="color:var(--text-muted)">No agents</span>';
 
   return `<div class="harness-2col">
-    <div><div class="config-section"><h3>Skills (${c.skills.length})</h3>${skillsHTML}</div></div>
+    <div><div class="config-section"><h3>Skills (${c.skills.length}) <button class="btn-create" id="btnCreateSkill" title="New skill">+</button></h3>${skillsHTML}</div></div>
     <div><div class="config-section"><h3>Agents (${c.agents.length})</h3>${agentsHTML}</div></div>
   </div>`;
 }
@@ -1067,22 +1166,16 @@ function renderHookFlow(c) {
   const hooks = c.hooks || {};
   const events = Object.keys(hooks);
 
-  const headerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-    <button id="toggleMonitorHooks" class="hook-flow-toggle">${state.hideMonitorHooks ? 'Show monitor hooks' : 'Hide monitor hooks'}</button>
-  </div>`;
+  if (events.length === 0) return '<span style="color:var(--text-muted)">No hooks configured</span>';
 
-  if (events.length === 0) return headerHTML + '<span style="color:var(--text-muted)">No hooks configured</span>';
-
-  const flowHTML = events
-    .map((event) => {
-      const entries = hooks[event];
-      const rows = entries
-        .flatMap((e) =>
-          e.hooks.map((h) => {
-            const isMon = isMonitorHook(h);
-            const label = h.type === 'http' ? `http \u2192 ${h.url || ''}` : (h.command || '').slice(0, 80) || h.type;
-            const hidden = state.hideMonitorHooks && isMon ? ' style="display:none"' : '';
-            return `<div class="hook-flow-row${isMon ? ' is-monitor' : ''}"${hidden}>
+  const flowHTML = events.map((event) => {
+    const entries = hooks[event];
+    const rows = entries.flatMap((e) =>
+      e.hooks.filter((h) => !isMonitorHook(h)).map((h) => {
+        const label = h.type === 'http'
+          ? `http \u2192 ${h.url || ''}`
+          : (h.command || '').slice(0, 80) || h.type;
+        return `<div class="hook-flow-row">
           <span class="hook-flow-matcher">${e.matcher || '*'}</span>
           <span class="hook-flow-arrow">\u2192</span>
           <span class="hook-flow-action">${label}</span>
@@ -1099,7 +1192,7 @@ function renderHookFlow(c) {
     })
     .join('');
 
-  return headerHTML + flowHTML;
+  return flowHTML;
 }
 
 function renderEnvSection(c) {
@@ -1774,7 +1867,7 @@ async function init() {
   setInterval(fetchUsage, 10000);
 
   initModalHandlers();
-  initFolderPickerHandlers();
+  initCreateModalHandlers();
 
   // Tool events toggle
   document.getElementById('toggleToolEvents').addEventListener('click', (e) => {

@@ -406,6 +406,58 @@ export class ClaudeProvider extends Provider {
       basename === 'ARCHITECTURE.md';
     return inClaude && resolvedPath.endsWith('.md');
   }
+
+  // ── CRUD ──────────────────────────────────────────────────
+
+  writeFile(filePath, content, projectRoot) {
+    const resolved = path.resolve(filePath);
+    if (!this.isFileWriteAllowed(resolved, projectRoot)) {
+      const err = new Error('Write not allowed: ' + filePath);
+      err.code = 'EPERM';
+      throw err;
+    }
+    fs.writeFileSync(resolved, content);
+  }
+
+  createSkill(projectRoot, name, { description = '', userInvocable = false, content = '' } = {}) {
+    validateName(name);
+    const skillDir = path.join(projectRoot, '.claude', 'skills', name);
+    if (fs.existsSync(skillDir)) throw new Error(`Skill "${name}" already exists`);
+    fs.mkdirSync(skillDir, { recursive: true });
+    const body = buildSkillMd({ description, userInvocable, content });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), body);
+  }
+
+  updateSkill(projectRoot, name, { description, userInvocable, content } = {}) {
+    validateName(name);
+    const skillMd = path.join(projectRoot, '.claude', 'skills', name, 'SKILL.md');
+    if (!fs.existsSync(skillMd)) throw new Error(`Skill "${name}" not found`);
+
+    if (content !== undefined) {
+      // Full content provided — write as-is
+      fs.writeFileSync(skillMd, content);
+    } else {
+      // Partial update — rebuild frontmatter
+      const existing = parseFrontmatterAndBody(fs.readFileSync(skillMd, 'utf-8'));
+      const fm = existing.frontmatter;
+      if (description !== undefined) fm.description = description;
+      if (userInvocable !== undefined) fm.user_invocable = String(userInvocable);
+      const body = buildSkillMd({
+        description: fm.description || '',
+        userInvocable: fm.user_invocable === 'true',
+        content: existing.body,
+      });
+      fs.writeFileSync(skillMd, body);
+    }
+  }
+
+  deleteSkill(projectRoot, name) {
+    validateName(name);
+    const skillDir = path.join(projectRoot, '.claude', 'skills', name);
+    if (!fs.existsSync(skillDir)) throw new Error(`Skill "${name}" not found`);
+    if (isSymlinkSync(skillDir)) throw new Error('Cannot delete symlinked skill');
+    fs.rmSync(skillDir, { recursive: true });
+  }
 }
 
 // ============================================================
@@ -849,4 +901,33 @@ function extractFirstHeading(filePath: string): string | null {
 
 function kebab(str: string): string {
   return str.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+}
+
+function validateName(name) {
+  if (!name || typeof name !== 'string') throw new Error('Name is required');
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('Name must only contain letters, numbers, hyphens, underscores');
+}
+
+function buildSkillMd({ description = '', userInvocable = false, content = '' }) {
+  const lines = ['---'];
+  if (description) lines.push(`description: "${description}"`);
+  lines.push(`user_invocable: ${userInvocable}`);
+  lines.push('---');
+  lines.push('');
+  lines.push(content);
+  return lines.join('\n');
+}
+
+function parseFrontmatterAndBody(text) {
+  const match = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) return { frontmatter: {}, body: text };
+  const fm = {};
+  for (const line of match[1].split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const val = line.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+    fm[key] = val;
+  }
+  return { frontmatter: fm, body: match[2] };
 }

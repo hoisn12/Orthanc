@@ -229,6 +229,61 @@ export function createServer({ projectRoot, port = 7432, provider: initialProvid
     }
   });
 
+  // File writer (for editing .md files)
+  app.put('/api/file', (req, res) => {
+    const { path: filePath, content } = req.body;
+    if (!filePath || content === undefined) return res.status(400).json({ error: 'path and content are required' });
+    try {
+      provider.writeFile(filePath, content, currentProject);
+      const config = parseProjectConfig(provider, currentProject);
+      config.projectRoot = currentProject;
+      config.projectName = path.basename(currentProject);
+      res.json({ ok: true, config });
+    } catch (err) {
+      res.status(err.code === 'EPERM' ? 403 : 500).json({ error: err.message });
+    }
+  });
+
+  // Skills CRUD
+  app.post('/api/skills', (req, res) => {
+    const { name, description, userInvocable, content } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    try {
+      provider.createSkill(currentProject, name, { description, userInvocable, content });
+      const config = parseProjectConfig(provider, currentProject);
+      config.projectRoot = currentProject;
+      config.projectName = path.basename(currentProject);
+      res.json({ ok: true, config });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/skills/:name', (req, res) => {
+    const { description, userInvocable, content } = req.body;
+    try {
+      provider.updateSkill(currentProject, req.params.name, { description, userInvocable, content });
+      const config = parseProjectConfig(provider, currentProject);
+      config.projectRoot = currentProject;
+      config.projectName = path.basename(currentProject);
+      res.json({ ok: true, config });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/skills/:name', (req, res) => {
+    try {
+      provider.deleteSkill(currentProject, req.params.name);
+      const config = parseProjectConfig(provider, currentProject);
+      config.projectRoot = currentProject;
+      config.projectName = path.basename(currentProject);
+      res.json({ ok: true, config });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Token usage
   app.get('/api/tokens', (req: Request, res: Response) => {
     try {
