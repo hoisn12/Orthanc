@@ -17,6 +17,8 @@ const state = {
   monitorStatus: null, // { hooks, otel, statusline } from /api/hooks/status
   showToolEvents: false, // toggle for pre/post-tool-use in feed
   currentTool: null, // { toolName, detail, pid, timestamp } — currently running tool
+  loadingOlder: false,
+  noMoreEvents: false,
   tokenFilter: { preset: 'all', from: null, to: null },
   sessionConfig: null, // per-session config when a session is selected
 };
@@ -281,12 +283,12 @@ function renderSessions() {
 
     // Consider "working" if last hook/streaming activity within 60s, or statusline data is fresh (within 15s)
     const activityAge = activity ? Date.now() - new Date(activity.timestamp).getTime() : Infinity;
-    const u_ = getUsageForSession(s.sessionId);
+    const u_ = getUsageForSession(s.sessionId, s.activeSessionId);
     const usageAge = u_?._receivedAt ? Date.now() - u_._receivedAt : Infinity;
     const working = s.alive && (activityAge < 60000 || usageAge < 15000);
 
     // Merge live usage data
-    const u = getUsageForSession(s.sessionId);
+    const u = getUsageForSession(s.sessionId, s.activeSessionId);
     let usageHTML = '';
     if (u) {
       const model = u.model?.display_name || u.model?.id || '';
@@ -414,10 +416,21 @@ function renderSessionConfig() {
   const cfg = state.sessionConfig;
   let html = `<div class="panel-title" style="margin-top:14px">Session Config <span style="color:var(--text-muted);font-size:11px">${cfg.projectName || ''}</span></div>`;
 
-  // CLAUDE.md files
+  // Instruction files — prefer actual loaded data from InstructionsLoaded hook
+  const loaded = cfg.loadedInstructions || [];
   const mdFiles = cfg.claudeMdFiles || [];
-  if (mdFiles.length > 0) {
-    html += `<div class="sc-section"><div class="sc-label">CLAUDE.md</div>`;
+  if (loaded.length > 0) {
+    html += `<div class="sc-section"><div class="sc-label">Instruction Files <span class="sc-count">${loaded.length}</span></div>`;
+    for (const inst of loaded) {
+      const typeBadge = `<span class="sc-badge sc-badge-${inst.memoryType.toLowerCase()}">${inst.memoryType}</span>`;
+      const reasonBadge = `<span class="sc-badge sc-badge-reason">${inst.loadReason}</span>`;
+      html += `<div class="sc-card" data-file="${inst.path}">
+        ${typeBadge} ${reasonBadge} <span class="sc-card-name">${shortenPath(inst.path)}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  } else if (mdFiles.length > 0) {
+    html += `<div class="sc-section"><div class="sc-label">CLAUDE.md <span class="sc-badge sc-badge-reason">estimated</span></div>`;
     for (const md of mdFiles) {
       const levelBadge = `<span class="sc-badge sc-badge-${md.level}">${md.level}</span>`;
       html += `<div class="sc-card" data-file="${md.path}">
@@ -506,6 +519,7 @@ function renderFilterBanner() {
 }
 
 function renderFeed() {
+  state.noMoreEvents = false;
   let filtered = state.events;
   if (state.filterPid) {
     filtered = filtered.filter((e) => e.pid === state.filterPid);
@@ -513,7 +527,34 @@ function renderFeed() {
   if (!state.showToolEvents) {
     filtered = filtered.filter((e) => !isToolEvent(e.type));
   }
+  // Hide assistant-streaming when the same turn has a stop with last_assistant_message
+  filtered = deduplicateAssistant(filtered);
   document.getElementById('feed').innerHTML = filtered.slice().reverse().slice(0, 100).map(eventToHTML).join('');
+}
+
+function deduplicateAssistant(events) {
+  // Collect PIDs that have a stop with last_assistant_message, grouped by turn
+  const coveredTurns = new Set(); // "pid:turnStartIdx"
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'stop' && e.payload?.last_assistant_message && e.pid) {
+      // Find the turn boundary (last user-prompt-submit before this stop)
+      let turnStart = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        if (events[j].type === 'user-prompt-submit' && events[j].pid === e.pid) {
+          turnStart = j;
+          break;
+        }
+      }
+      for (let j = turnStart; j < i; j++) {
+        if (events[j].type === 'assistant-streaming' && events[j].pid === e.pid) {
+          coveredTurns.add(j);
+        }
+      }
+    }
+  }
+  if (coveredTurns.size === 0) return events;
+  return events.filter((_, idx) => !coveredTurns.has(idx));
 }
 
 function renderFeedItem(event) {
@@ -521,7 +562,36 @@ function renderFeedItem(event) {
   if (!state.showToolEvents && isToolEvent(event.type)) return;
   const el = document.getElementById('feed');
   el.insertAdjacentHTML('afterbegin', eventToHTML(event));
-  while (el.children.length > 200) el.removeChild(el.lastChild);
+}
+
+async function fetchOlderEvents() {
+  if (state.loadingOlder || state.noMoreEvents) return;
+  const oldest = state.events[0];
+  if (!oldest) return;
+
+  state.loadingOlder = true;
+  try {
+    let url = `/api/events/older?before=${encodeURIComponent(oldest.timestamp)}&limit=50`;
+    if (state.filterPid) url += `&pid=${state.filterPid}`;
+    const res = await fetch(url);
+    const older = await res.json();
+    if (!Array.isArray(older) || older.length === 0) {
+      state.noMoreEvents = true;
+      return;
+    }
+    state.events.unshift(...older);
+    let toRender = deduplicateAssistant(older).slice().reverse();
+    if (!state.showToolEvents) {
+      toRender = toRender.filter((e) => !isToolEvent(e.type));
+    }
+    if (toRender.length > 0) {
+      document.getElementById('feed').insertAdjacentHTML('beforeend', toRender.map(eventToHTML).join(''));
+    }
+  } catch {
+    /* ignore fetch errors */
+  } finally {
+    state.loadingOlder = false;
+  }
 }
 
 function eventToHTML(event) {
@@ -585,6 +655,13 @@ function extractDetail(event) {
     const msg = typeof p.prompt === 'string' ? p.prompt : '';
     return `<div class="event-user-msg event-md">${renderMd(msg)}</div>`;
   }
+  // Instructions loaded
+  if (type === 'instructions-loaded' && p.file_path) {
+    const mem = p.memory_type ? ` [${p.memory_type}]` : '';
+    const reason = p.load_reason ? ` (${p.load_reason})` : '';
+    return `${p.file_path}${mem}${reason}`;
+  }
+
   // Task events
   if (type === 'task-created' && p.task_subject) {
     const team = p.teammate_name ? ` [${p.teammate_name}]` : '';
@@ -609,26 +686,26 @@ function extractDetail(event) {
 }
 
 // ============================================================
-// File Viewer / Editor Modal
+// File Viewer / Editor Dialog (native <dialog>)
 // ============================================================
 
-const modalState = { filePath: null, type: null, name: null, originalContent: '', editing: false };
+const dialogState = { filePath: null, type: null, name: null, originalContent: '', editing: false };
 
 async function openFileViewer(filePath, { type, name } = {}) {
   if (!filePath) return;
-  const modal = document.getElementById('fileModal');
-  const title = document.getElementById('modalTitle');
-  const body = document.getElementById('modalBody');
-  const editor = document.getElementById('modalEditor');
-  const editBtn = document.getElementById('modalEditBtn');
-  const saveBtn = document.getElementById('modalSaveBtn');
-  const cancelBtn = document.getElementById('modalCancelBtn');
-  const fmDiv = document.getElementById('modalFrontmatter');
+  const dlg = document.getElementById('fileDialog');
+  const title = document.getElementById('dialogTitle');
+  const body = document.getElementById('dialogBody');
+  const editor = document.getElementById('dialogEditor');
+  const editBtn = document.getElementById('dialogEditBtn');
+  const saveBtn = document.getElementById('dialogSaveBtn');
+  const cancelBtn = document.getElementById('dialogCancelBtn');
+  const fmDiv = document.getElementById('dialogFrontmatter');
 
-  modalState.filePath = filePath;
-  modalState.type = type || null;
-  modalState.name = name || null;
-  modalState.editing = false;
+  dialogState.filePath = filePath;
+  dialogState.type = type || null;
+  dialogState.name = name || null;
+  dialogState.editing = false;
 
   title.textContent = filePath;
   body.textContent = 'Loading...';
@@ -639,14 +716,14 @@ async function openFileViewer(filePath, { type, name } = {}) {
   cancelBtn.style.display = 'none';
   fmDiv.style.display = 'none';
   fmDiv.innerHTML = '';
-  modal.style.display = 'flex';
+  dlg.showModal();
 
   try {
     const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
     if (res.ok) {
       body.textContent = data.content;
-      modalState.originalContent = data.content;
+      dialogState.originalContent = data.content;
       editBtn.style.display = '';
     } else {
       body.textContent = `Error: ${data.error}`;
@@ -657,40 +734,40 @@ async function openFileViewer(filePath, { type, name } = {}) {
 }
 
 function enterEditMode() {
-  const body = document.getElementById('modalBody');
-  const editor = document.getElementById('modalEditor');
-  const editBtn = document.getElementById('modalEditBtn');
-  const saveBtn = document.getElementById('modalSaveBtn');
-  const cancelBtn = document.getElementById('modalCancelBtn');
+  const body = document.getElementById('dialogBody');
+  const editor = document.getElementById('dialogEditor');
+  const editBtn = document.getElementById('dialogEditBtn');
+  const saveBtn = document.getElementById('dialogSaveBtn');
+  const cancelBtn = document.getElementById('dialogCancelBtn');
 
-  editor.value = modalState.originalContent;
+  editor.value = dialogState.originalContent;
   body.style.display = 'none';
   editor.style.display = '';
   editBtn.style.display = 'none';
   saveBtn.style.display = '';
   cancelBtn.style.display = '';
-  modalState.editing = true;
+  dialogState.editing = true;
   editor.focus();
 }
 
 function exitEditMode() {
-  const body = document.getElementById('modalBody');
-  const editor = document.getElementById('modalEditor');
-  const editBtn = document.getElementById('modalEditBtn');
-  const saveBtn = document.getElementById('modalSaveBtn');
-  const cancelBtn = document.getElementById('modalCancelBtn');
+  const body = document.getElementById('dialogBody');
+  const editor = document.getElementById('dialogEditor');
+  const editBtn = document.getElementById('dialogEditBtn');
+  const saveBtn = document.getElementById('dialogSaveBtn');
+  const cancelBtn = document.getElementById('dialogCancelBtn');
 
   body.style.display = '';
   editor.style.display = 'none';
   editBtn.style.display = '';
   saveBtn.style.display = 'none';
   cancelBtn.style.display = 'none';
-  modalState.editing = false;
+  dialogState.editing = false;
 }
 
-async function saveModalFile() {
-  const editor = document.getElementById('modalEditor');
-  const saveBtn = document.getElementById('modalSaveBtn');
+async function saveDialogFile() {
+  const editor = document.getElementById('dialogEditor');
+  const saveBtn = document.getElementById('dialogSaveBtn');
   const content = editor.value;
 
   saveBtn.textContent = 'Saving...';
@@ -698,8 +775,8 @@ async function saveModalFile() {
 
   try {
     let res;
-    if (modalState.type === 'skill' && modalState.name) {
-      res = await fetch(`/api/skills/${encodeURIComponent(modalState.name)}`, {
+    if (dialogState.type === 'skill' && dialogState.name) {
+      res = await fetch(`/api/skills/${encodeURIComponent(dialogState.name)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
@@ -708,7 +785,7 @@ async function saveModalFile() {
       res = await fetch('/api/file', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: modalState.filePath, content }),
+        body: JSON.stringify({ path: dialogState.filePath, content }),
       });
     }
 
@@ -716,8 +793,8 @@ async function saveModalFile() {
     if (res.ok && data.config) {
       state.config = data.config;
       renderHarness();
-      modalState.originalContent = content;
-      document.getElementById('modalBody').textContent = content;
+      dialogState.originalContent = content;
+      document.getElementById('dialogBody').textContent = content;
       exitEditMode();
     } else {
       alert('Save failed: ' + (data.error || 'Unknown error'));
@@ -730,27 +807,30 @@ async function saveModalFile() {
   }
 }
 
-function closeModal() {
-  document.getElementById('fileModal').style.display = 'none';
-  modalState.editing = false;
+function closeFileDialog() {
+  document.getElementById('fileDialog').close();
+  dialogState.editing = false;
 }
 
-function initModalHandlers() {
-  document.getElementById('modalClose').addEventListener('click', closeModal);
-  document.getElementById('fileModal').addEventListener('click', (e) => { if (e.target.id === 'fileModal') closeModal(); });
-  document.getElementById('modalEditBtn').addEventListener('click', enterEditMode);
-  document.getElementById('modalSaveBtn').addEventListener('click', saveModalFile);
-  document.getElementById('modalCancelBtn').addEventListener('click', exitEditMode);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+function initDialogHandlers() {
+  const dlg = document.getElementById('fileDialog');
+  document.getElementById('dialogClose').addEventListener('click', closeFileDialog);
+  document.getElementById('dialogEditBtn').addEventListener('click', enterEditMode);
+  document.getElementById('dialogSaveBtn').addEventListener('click', saveDialogFile);
+  document.getElementById('dialogCancelBtn').addEventListener('click', exitEditMode);
+  // Close on backdrop click
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) closeFileDialog();
+  });
 }
 
 // ============================================================
-// Create Skill Modal
+// Create Skill Dialog
 // ============================================================
 
 function openCreateSkillModal() {
-  const modal = document.getElementById('createModal');
-  const title = document.getElementById('createModalTitle');
+  const dlg = document.getElementById('createDialog');
+  const title = document.getElementById('createDialogTitle');
   const form = document.getElementById('createForm');
   const editor = document.getElementById('createEditor');
 
@@ -763,7 +843,7 @@ function openCreateSkillModal() {
   editor.value = '';
   editor.style.display = '';
   form.style.display = '';
-  modal.style.display = 'flex';
+  dlg.showModal();
 
   setTimeout(() => document.getElementById('createSkillName')?.focus(), 50);
 }
@@ -775,7 +855,10 @@ async function saveCreateSkill() {
   const content = document.getElementById('createEditor')?.value || '';
   const btn = document.getElementById('createSaveBtn');
 
-  if (!name) { alert('Name is required'); return; }
+  if (!name) {
+    alert('Name is required');
+    return;
+  }
 
   btn.textContent = 'Creating...';
   btn.disabled = true;
@@ -790,7 +873,7 @@ async function saveCreateSkill() {
     if (res.ok && data.config) {
       state.config = data.config;
       renderHarness();
-      closeCreateModal();
+      closeCreateDialog();
     } else {
       alert('Create failed: ' + (data.error || 'Unknown error'));
     }
@@ -802,14 +885,17 @@ async function saveCreateSkill() {
   }
 }
 
-function closeCreateModal() {
-  document.getElementById('createModal').style.display = 'none';
+function closeCreateDialog() {
+  document.getElementById('createDialog').close();
 }
 
-function initCreateModalHandlers() {
+function initCreateDialogHandlers() {
+  const dlg = document.getElementById('createDialog');
   document.getElementById('createSaveBtn').addEventListener('click', saveCreateSkill);
-  document.getElementById('createCancelBtn').addEventListener('click', closeCreateModal);
-  document.getElementById('createModal').addEventListener('click', (e) => { if (e.target.id === 'createModal') closeCreateModal(); });
+  document.getElementById('createCancelBtn').addEventListener('click', closeCreateDialog);
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) closeCreateDialog();
+  });
 }
 
 // ============================================================
@@ -830,6 +916,80 @@ async function deleteSkill(name) {
   } catch (err) {
     alert('Delete failed: ' + err.message);
   }
+}
+
+// ============================================================
+// Folder Picker
+// ============================================================
+
+function openFolderPicker(startPath) {
+  const modal = document.getElementById('folderPickerModal');
+  const input = document.getElementById('folderPickerPathInput');
+  input.value = startPath || '/';
+  modal.style.display = 'flex';
+  loadFolderList(input.value);
+}
+
+function closeFolderPicker() {
+  document.getElementById('folderPickerModal').style.display = 'none';
+}
+
+async function loadFolderList(dirPath) {
+  const list = document.getElementById('folderPickerList');
+  const input = document.getElementById('folderPickerPathInput');
+  list.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:12px">Loading...</div>';
+
+  try {
+    const res = await fetch(`/api/directories?path=${encodeURIComponent(dirPath)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      list.innerHTML = `<div style="padding:10px;color:var(--red);font-size:12px">${data.error}</div>`;
+      return;
+    }
+
+    input.value = data.path;
+
+    if (data.directories.length === 0) {
+      list.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:12px">No subdirectories</div>';
+      return;
+    }
+
+    list.innerHTML = data.directories
+      .map((d) => `<div class="folder-picker-item" data-path="${data.path}/${d}">${d}</div>`)
+      .join('');
+
+    list.querySelectorAll('.folder-picker-item').forEach((item) => {
+      item.addEventListener('click', () => loadFolderList(item.dataset.path));
+    });
+  } catch (err) {
+    list.innerHTML = `<div style="padding:10px;color:var(--red);font-size:12px">${err.message}</div>`;
+  }
+}
+
+function initFolderPickerHandlers() {
+  document.getElementById('folderPickerClose').addEventListener('click', closeFolderPicker);
+  document.getElementById('folderPickerCancel').addEventListener('click', closeFolderPicker);
+  document.getElementById('folderPickerModal').addEventListener('click', (e) => {
+    if (e.target.id === 'folderPickerModal') closeFolderPicker();
+  });
+  document.getElementById('folderPickerUp').addEventListener('click', () => {
+    const input = document.getElementById('folderPickerPathInput');
+    const parent = input.value.replace(/\/[^/]+\/?$/, '') || '/';
+    loadFolderList(parent);
+  });
+  document.getElementById('folderPickerGo').addEventListener('click', () => {
+    const input = document.getElementById('folderPickerPathInput');
+    loadFolderList(input.value);
+  });
+  document.getElementById('folderPickerPathInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadFolderList(e.target.value);
+  });
+  document.getElementById('folderPickerSelect').addEventListener('click', async () => {
+    const selectedPath = document.getElementById('folderPickerPathInput').value;
+    closeFolderPicker();
+    await switchProject(selectedPath);
+    renderSettings();
+  });
 }
 
 // ============================================================
@@ -915,7 +1075,6 @@ function renderHarness() {
       });
     }
   });
-
 }
 
 function harnessSection(title, content, collapsible = true) {
@@ -1055,14 +1214,19 @@ function renderClaudeMd(c) {
 }
 
 function renderSkillsAgents(c) {
-  const skillsHTML = c.skills.length > 0
-    ? c.skills.map((s) => {
-        const badges = [];
-        if (s.userInvocable) badges.push('<span class="harness-badge badge-invocable">invocable</span>');
-        if (s.hasReferences) badges.push('<span class="harness-badge badge-refs">refs</span>');
-        if (s.symlink) badges.push(`<span class="harness-badge badge-symlink" title="${s.symlinkTarget || ''}">\u2192 symlink</span>`);
-        const canDelete = !s.symlink;
-        return `<div class="harness-card" ${s.filePath ? `data-file="${s.filePath}" data-type="skill" data-name="${s.name}"` : ''}>
+  const skillsHTML =
+    c.skills.length > 0
+      ? c.skills
+          .map((s) => {
+            const badges = [];
+            if (s.userInvocable) badges.push('<span class="harness-badge badge-invocable">invocable</span>');
+            if (s.hasReferences) badges.push('<span class="harness-badge badge-refs">refs</span>');
+            if (s.symlink)
+              badges.push(
+                `<span class="harness-badge badge-symlink" title="${s.symlinkTarget || ''}">\u2192 symlink</span>`,
+              );
+            const canDelete = !s.symlink;
+            return `<div class="harness-card" ${s.filePath ? `data-file="${s.filePath}" data-type="skill" data-name="${s.name}"` : ''}>
           <div class="harness-card-name">
             <span style="width:6px;height:6px;border-radius:50%;background:${s.active ? 'var(--green)' : 'var(--text-muted)'};flex-shrink:0"></span>
             ${s.name}
@@ -1164,35 +1328,28 @@ function renderRulesSection(c) {
 
 function renderHookFlow(c) {
   const hooks = c.hooks || {};
-  const events = Object.keys(hooks);
+  const allEvents = (state.provider && state.provider.hookEvents) || Object.keys(hooks);
 
-  if (events.length === 0) return '<span style="color:var(--text-muted)">No hooks configured</span>';
+  if (allEvents.length === 0) return '<span style="color:var(--text-muted)">No hooks configured</span>';
 
-  const flowHTML = events.map((event) => {
-    const entries = hooks[event];
-    const rows = entries.flatMap((e) =>
-      e.hooks.filter((h) => !isMonitorHook(h)).map((h) => {
-        const label = h.type === 'http'
-          ? `http \u2192 ${h.url || ''}`
-          : (h.command || '').slice(0, 80) || h.type;
-        return `<div class="hook-flow-row">
-          <span class="hook-flow-matcher">${e.matcher || '*'}</span>
-          <span class="hook-flow-arrow">\u2192</span>
-          <span class="hook-flow-action">${label}</span>
-          ${e.source ? `<span class="source-tag">${shortenPath(e.source)}</span>` : ''}
-        </div>`;
-          }),
-        )
-        .join('');
+  return allEvents
+    .map((event) => {
+      const entries = hooks[event] || [];
+      const hasMonitor = entries.some((e) => e.hooks?.some(isMonitorHook));
+      const userMatchers = entries.filter((e) => e.hooks?.some((h) => !isMonitorHook(h))).map((e) => e.matcher || '*');
 
-      return `<div class="hook-flow-event">
-      <div class="hook-flow-event-name">${event}</div>
-      ${rows}
+      const active = entries.length > 0;
+      const dot = active ? '<span class="hf-dot active"></span>' : '<span class="hf-dot"></span>';
+      const badges = [];
+      if (hasMonitor) badges.push('<span class="hf-badge monitor">monitor</span>');
+      for (const m of userMatchers) badges.push(`<span class="hf-badge user">${m}</span>`);
+
+      return `<div class="hf-row${active ? ' active' : ''}">
+      ${dot}<span class="hf-name">${event}</span>
+      <span class="hf-badges">${badges.join('')}</span>
     </div>`;
     })
     .join('');
-
-  return flowHTML;
 }
 
 function renderEnvSection(c) {
@@ -1371,7 +1528,7 @@ async function renderSettings() {
   });
 }
 
-const HOOK_EVENTS_COUNT = 11;
+const HOOK_EVENTS_COUNT = 12;
 
 // ============================================================
 
@@ -1626,9 +1783,16 @@ function renderRateLimits() {
   </div>`;
 }
 
-function getUsageForSession(sessionId) {
-  if (!sessionId || !state.usage) return null;
-  return state.usage.find((u) => u.session_id === sessionId) || null;
+function getUsageForSession(sessionId, activeSessionId) {
+  if (!state.usage) return null;
+  if (activeSessionId) {
+    const match = state.usage.find((u) => u.session_id === activeSessionId);
+    if (match) return match;
+  }
+  if (sessionId) {
+    return state.usage.find((u) => u.session_id === sessionId) || null;
+  }
+  return null;
 }
 
 function formatTimeUntil(targetMs) {
@@ -1866,8 +2030,17 @@ async function init() {
   setInterval(fetchMetrics, 15000);
   setInterval(fetchUsage, 10000);
 
-  initModalHandlers();
-  initCreateModalHandlers();
+  initDialogHandlers();
+  initCreateDialogHandlers();
+  initFolderPickerHandlers();
+
+  // Infinite scroll for feed
+  const feedPanel = document.getElementById('feed').parentElement;
+  feedPanel.addEventListener('scroll', () => {
+    if (feedPanel.scrollTop + feedPanel.clientHeight >= feedPanel.scrollHeight - 100) {
+      fetchOlderEvents();
+    }
+  });
 
   // Tool events toggle
   document.getElementById('toggleToolEvents').addEventListener('click', (e) => {

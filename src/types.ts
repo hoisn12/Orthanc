@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 export interface SessionData {
   pid: number;
   sessionId: string;
+  activeSessionId?: string;
   cwd: string;
   startedAt: number;
   kind?: string;
@@ -239,6 +240,7 @@ export interface ProjectConfig {
   projectRoot?: string;
   projectName?: string;
   provider?: string;
+  loadedInstructions?: { path: string; memoryType: string; loadReason: string; timestamp: string }[];
 }
 
 // ── Database ────────────────────────────────────────────────

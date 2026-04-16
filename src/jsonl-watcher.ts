@@ -37,7 +37,14 @@ export class JsonlWatcher {
   fileState: Map<string, FileState>;
   projectDir: string | null;
 
-  constructor({ provider, sessionWatcher, eventStore, tokenStore, projectRoot, pollInterval = 1000 }: JsonlWatcherOptions) {
+  constructor({
+    provider,
+    sessionWatcher,
+    eventStore,
+    tokenStore,
+    projectRoot,
+    pollInterval = 1000,
+  }: JsonlWatcherOptions) {
     this.provider = provider;
     this.sessionWatcher = sessionWatcher;
     this.eventStore = eventStore;
@@ -81,9 +88,15 @@ export class JsonlWatcher {
       if (!activeIds.has(sid)) this.fileState.delete(sid);
     }
 
+    const projectsDir = this.provider.getProjectsDir();
     for (const session of activeSessions) {
       if (!session.sessionId) continue;
-      const filePath = path.join(this.projectDir, `${session.sessionId}.jsonl`);
+      // Try session's own cwd first (handles worktree sessions),
+      // then fall back to the main project dir
+      const sessionDir = session.cwd ? findProjectDir(projectsDir, session.cwd) : null;
+      const dir = sessionDir || this.projectDir;
+      const effectiveId = session.activeSessionId || session.sessionId;
+      const filePath = path.join(dir, `${effectiveId}.jsonl`);
       this.pollFile(filePath, session);
     }
   }
@@ -204,9 +217,6 @@ export class JsonlWatcher {
         state.knownMessages.delete(keys[i]!);
       }
     }
-
-    // Skip complete messages — the Stop hook already handles final responses
-    if (isComplete) return;
 
     this.eventStore.add({
       type: 'assistant-streaming',

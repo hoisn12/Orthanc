@@ -51,9 +51,11 @@ export class SessionWatcher {
 
         const uptime = Date.now() - data.startedAt;
 
+        const existing = this.sessions.get(pid);
         this.sessions.set(pid, {
           pid,
           sessionId: data.sessionId,
+          activeSessionId: existing?.activeSessionId,
           cwd: data.cwd,
           startedAt: data.startedAt,
           kind: data.kind,
@@ -87,7 +89,19 @@ export class SessionWatcher {
 
   getBySessionId(sessionId: string): SessionInfo | null {
     for (const session of this.sessions.values()) {
-      if (session.sessionId === sessionId) return session;
+      if (session.sessionId === sessionId || session.activeSessionId === sessionId) return session;
+    }
+    return null;
+  }
+
+  setActiveSessionId(pid: number, activeSessionId: string): void {
+    const session = this.sessions.get(pid);
+    if (session) session.activeSessionId = activeSessionId;
+  }
+
+  getByCwd(cwd: string): SessionInfo | null {
+    for (const session of this.sessions.values()) {
+      if (session.alive && session.cwd === cwd) return session;
     }
     return null;
   }

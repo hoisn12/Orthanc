@@ -29,9 +29,9 @@ describe('Provider interface', () => {
     assert.equal(p.getSessionsDir(), path.join(os.homedir(), '.codex', 'sessions'));
   });
 
-  it('ClaudeProvider has 11 hook events', () => {
+  it('ClaudeProvider has 12 hook events', () => {
     const p = new ClaudeProvider();
-    assert.equal(p.getHookEvents().length, 11);
+    assert.equal(p.getHookEvents().length, 12);
   });
 
   it('CodexProvider has 5 hook events', () => {

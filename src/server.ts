@@ -47,6 +47,7 @@ export function createServer({
   // Prepared statements
   const upsertUsage = db.prepare('INSERT OR REPLACE INTO usage (session_id, data, received_at) VALUES (?, ?, ?)');
   const selectUsage = db.prepare('SELECT * FROM usage ORDER BY received_at DESC');
+  const getUsageBySession = db.prepare('SELECT data FROM usage WHERE session_id = ?');
   const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
   const setSetting = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
 
@@ -152,6 +153,28 @@ export function createServer({
       const config = parseProjectConfig(provider, session.cwd);
       config.projectRoot = session.cwd;
       config.projectName = path.basename(session.cwd);
+
+      // Attach actual loaded instructions from InstructionsLoaded hook events
+      if (session.sessionId) {
+        const events = eventStore.getBySessionAndType(session.sessionId, 'instructions-loaded');
+        if (events.length > 0) {
+          const seen = new Set<string>();
+          config.loadedInstructions = events
+            .filter((e) => {
+              const fp = String(e.payload?.file_path || '');
+              if (!fp || seen.has(fp)) return false;
+              seen.add(fp);
+              return true;
+            })
+            .map((e) => ({
+              path: String(e.payload?.file_path || ''),
+              memoryType: String(e.payload?.memory_type || ''),
+              loadReason: String(e.payload?.load_reason || ''),
+              timestamp: e.timestamp,
+            }));
+        }
+      }
+
       res.json(config);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -163,6 +186,18 @@ export function createServer({
     const filter: { pid?: number } = {};
     if (req.query.pid) filter.pid = parseInt(String(req.query.pid));
     res.json(eventStore.getRecent(limit, filter));
+  });
+
+  app.get('/api/events/older', (req: Request, res: Response) => {
+    const before = String(req.query.before || '');
+    if (!before) {
+      res.status(400).json({ error: 'before is required' });
+      return;
+    }
+    const limit = parseInt(String(req.query.limit)) || 50;
+    const filter: { pid?: number } = {};
+    if (req.query.pid) filter.pid = parseInt(String(req.query.pid));
+    res.json(eventStore.getOlderThan(before, limit, filter));
   });
 
   // SSE endpoint
@@ -197,8 +232,21 @@ export function createServer({
     }
 
     if (sessionId) {
+      // Try direct match (includes activeSessionId lookup)
       const session = sessionWatcher.getBySessionId(sessionId);
-      if (session) pid = session.pid;
+      if (session) {
+        pid = session.pid;
+      } else {
+        // Fallback: match by cwd from payload
+        const cwd = (payload.cwd as string) || '';
+        if (cwd) {
+          const cwdSession = sessionWatcher.getByCwd(cwd);
+          if (cwdSession) {
+            pid = cwdSession.pid;
+            sessionWatcher.setActiveSessionId(cwdSession.pid, sessionId);
+          }
+        }
+      }
     }
     if (!pid) {
       const fallback = sessionWatcher.getMostRecentAlive();
@@ -345,6 +393,31 @@ export function createServer({
     if (!sessionId) {
       res.status(400).json({ error: 'session_id required' });
       return;
+    }
+
+    // Resolve PID and update activeSessionId mapping
+    const cwd = (data.cwd as string) || '';
+    let session = sessionWatcher.getBySessionId(sessionId);
+    if (!session && cwd) {
+      session = sessionWatcher.getByCwd(cwd);
+      if (session) {
+        sessionWatcher.setActiveSessionId(session.pid, sessionId);
+      }
+    }
+
+    // Preserve last valid context_window values when new data has nulls
+    const ctx = data.context_window as Record<string, unknown> | null | undefined;
+    if (ctx && ctx.used_percentage == null) {
+      const prev = getUsageBySession.get(sessionId) as { data: string } | undefined;
+      if (prev) {
+        const prevData = JSON.parse(prev.data) as Record<string, unknown>;
+        const prevCtx = prevData.context_window as Record<string, unknown> | null | undefined;
+        if (prevCtx && prevCtx.used_percentage != null) {
+          ctx.used_percentage = prevCtx.used_percentage;
+          ctx.remaining_percentage = prevCtx.remaining_percentage;
+          ctx.current_usage = prevCtx.current_usage;
+        }
+      }
     }
 
     upsertUsage.run(sessionId, JSON.stringify(data), Date.now());

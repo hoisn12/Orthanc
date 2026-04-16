@@ -23,6 +23,9 @@ export class EventStore {
   private _stmtRecentByPid: Database.Statement;
   private _stmtCount: Database.Statement;
   private _stmtPrune: Database.Statement;
+  private _stmtBySessionAndType: Database.Statement;
+  private _stmtOlder: Database.Statement;
+  private _stmtOlderByPid: Database.Statement;
 
   constructor(maxSize = 2000, { db }: { db?: DbInstance } = {}) {
     this.maxSize = maxSize;
@@ -37,6 +40,13 @@ export class EventStore {
     this._stmtCount = this.db.prepare('SELECT COUNT(*) as cnt FROM events');
     this._stmtPrune = this.db.prepare(
       'DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY timestamp ASC LIMIT ?)',
+    );
+    this._stmtBySessionAndType = this.db.prepare(
+      'SELECT * FROM events WHERE session_id = ? AND type = ? ORDER BY timestamp ASC',
+    );
+    this._stmtOlder = this.db.prepare('SELECT * FROM events WHERE timestamp < ? ORDER BY timestamp DESC LIMIT ?');
+    this._stmtOlderByPid = this.db.prepare(
+      'SELECT * FROM events WHERE timestamp < ? AND pid = ? ORDER BY timestamp DESC LIMIT ?',
     );
   }
 
@@ -79,6 +89,21 @@ export class EventStore {
       rows = this._stmtRecent.all(limit) as EventRow[];
     }
     return rows.map(rowToEvent).reverse();
+  }
+
+  getOlderThan(before: string, limit = 50, filter: { pid?: number } = {}): EventEntry[] {
+    let rows: EventRow[];
+    if (filter.pid) {
+      rows = this._stmtOlderByPid.all(before, filter.pid, limit) as EventRow[];
+    } else {
+      rows = this._stmtOlder.all(before, limit) as EventRow[];
+    }
+    return rows.map(rowToEvent).reverse();
+  }
+
+  getBySessionAndType(sessionId: string, type: string): EventEntry[] {
+    const rows = this._stmtBySessionAndType.all(sessionId, type) as EventRow[];
+    return rows.map(rowToEvent);
   }
 
   subscribe(listener: EventListener): () => void {

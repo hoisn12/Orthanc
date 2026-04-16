@@ -34,6 +34,7 @@ const HOOK_EVENTS: string[] = [
   'TaskCompleted',
   'Stop',
   'Notification',
+  'InstructionsLoaded',
 ];
 
 const MAX_DEPTH = 5;
@@ -238,7 +239,9 @@ export class ClaudeProvider extends Provider {
 
     if (statusline) {
       const providerFile = new URL(import.meta.url).pathname;
-      const projectRootDir = path.dirname(path.dirname(path.dirname(providerFile)));
+      // dist/src/providers/claude-provider.js → 4 levels up to project root
+      let projectRootDir = path.dirname(path.dirname(path.dirname(providerFile)));
+      if (path.basename(projectRootDir) === 'dist') projectRootDir = path.dirname(projectRootDir);
       const scriptPath = path.join(projectRootDir, 'bin', 'statusline.sh');
       settings.statusLine = {
         type: 'command',

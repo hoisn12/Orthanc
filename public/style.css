@@ -24,6 +24,28 @@
   box-sizing: border-box;
 }
 
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-hover) transparent;
+  }
+}
+
 body {
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
   background: var(--bg-primary);
@@ -124,7 +146,6 @@ body {
   white-space: nowrap;
 }
 
-
 @keyframes pulse {
   0%,
   100% {
@@ -167,6 +188,7 @@ body {
 .panel {
   background: var(--bg-primary);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 12px 16px;
 }
 
@@ -402,6 +424,24 @@ body {
   color: var(--yellow);
   font-family: var(--font-mono);
   text-transform: none;
+}
+.sc-badge-reason {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  text-transform: none;
+}
+.sc-badge-user {
+  background: rgba(234, 179, 8, 0.15);
+  color: var(--yellow);
+}
+.sc-badge-local {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--green);
+}
+.sc-badge-managed {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
 }
 
 /* ========== Activity Feed ========== */
@@ -726,10 +766,19 @@ body {
   background: var(--bg-card);
 }
 
-.btn-sm:hover { background: var(--bg-hover); }
+.btn-sm:hover {
+  background: var(--bg-hover);
+}
 
-.btn-install { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
-.btn-install:hover { background: var(--accent); border-color: var(--accent); }
+.btn-install {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+  color: #fff;
+}
+.btn-install:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 
 .btn-uninstall {
   background: var(--bg-card);
@@ -1340,68 +1389,55 @@ body {
 }
 
 /* Hook flow */
-.hook-flow-event {
-  margin-bottom: 12px;
-}
-
-.hook-flow-event-name {
-  font-weight: 700;
-  color: var(--orange);
-  font-size: 12px;
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.hook-flow-row {
+.hf-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 0 3px 16px;
-  font-size: 11px;
-  position: relative;
-}
-
-.hook-flow-row::before {
-  content: '\251C';
-  position: absolute;
-  left: 4px;
+  padding: 3px 0;
+  font-size: 12px;
   color: var(--text-muted);
 }
-
-.hook-flow-row:last-child::before {
-  content: '\2514';
+.hf-row.active {
+  color: var(--text-primary);
 }
 
-.hook-flow-matcher {
-  background: var(--bg-hover);
+.hf-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.3;
+  flex-shrink: 0;
+}
+.hf-dot.active {
+  background: var(--green);
+  opacity: 1;
+}
+
+.hf-name {
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.hf-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.hf-badge {
+  font-size: 10px;
   padding: 1px 6px;
   border-radius: 3px;
-  color: var(--accent);
   font-weight: 600;
-  min-width: 80px;
 }
-
-.hook-flow-arrow {
-  color: var(--text-muted);
-}
-
-.hook-flow-action {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 400px;
-}
-
-.hook-flow-row.is-monitor {
-  opacity: 0.5;
-}
-.hook-flow-row.is-monitor .hook-flow-action::after {
-  content: ' [monitor]';
+.hf-badge.monitor {
+  background: var(--bg-hover);
   color: var(--accent);
-  font-weight: 600;
+}
+.hf-badge.user {
+  background: var(--bg-hover);
+  color: var(--orange);
 }
 
 .hook-flow-toggle {
@@ -1623,31 +1659,31 @@ body {
   font-size: 10px;
 }
 
-/* ========== File Viewer Modal ========== */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(2px);
-}
-
-.modal {
+/* ========== Dialog (native <dialog>) ========== */
+.dialog {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 10px;
   width: 90%;
-  max-width: 720px;
+  max-width: 900px;
   height: 80vh;
-  display: flex;
-  flex-direction: column;
+  margin: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 0;
+  color: inherit;
 }
 
-.modal-header {
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1656,7 +1692,7 @@ body {
   flex-shrink: 0;
 }
 
-.modal-title {
+.dialog-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--accent);
@@ -1665,7 +1701,13 @@ body {
   white-space: nowrap;
 }
 
-.modal-close {
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dialog-close {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -1675,11 +1717,11 @@ body {
   line-height: 1;
 }
 
-.modal-close:hover {
+.dialog-close:hover {
   color: var(--text-primary);
 }
 
-.modal-body {
+.dialog-body {
   padding: 16px;
   overflow-y: auto;
   flex: 1 1 auto;
@@ -1692,7 +1734,112 @@ body {
   margin: 0;
 }
 
-/* ========== Folder Picker Modal ========== */
+.dialog-editor {
+  display: block;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 300px;
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: none;
+  border-top: 1px solid var(--border);
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.dialog-frontmatter {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.dialog-frontmatter label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.dialog-frontmatter input[type='text'] {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 200px;
+}
+
+.dialog-frontmatter input[type='text']:focus {
+  border-color: var(--accent);
+}
+
+.dialog-frontmatter input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+/* ========== Modal Overlay (folder picker etc.) ========== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+
+.modal-overlay .modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 90%;
+  max-width: 720px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-overlay .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-overlay .modal-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.modal-overlay .modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.modal-overlay .modal-close:hover {
+  color: var(--text-primary);
+}
+
+/* ========== Folder Picker ========== */
 .folder-picker-modal {
   max-width: 560px;
 }
@@ -1781,69 +1928,6 @@ body {
   border-radius: 4px;
 }
 
-/* ========== Modal Editor ========== */
-.modal-wide { max-width: 900px; }
-
-.modal-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.modal-editor {
-  display: block;
-  width: 100%;
-  flex: 1 1 auto;
-  min-height: 300px;
-  padding: 16px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--text-secondary);
-  background: var(--bg-primary);
-  border: none;
-  border-top: 1px solid var(--border);
-  resize: none;
-  outline: none;
-  box-sizing: border-box;
-}
-
-.modal-frontmatter {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-.modal-frontmatter label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.modal-frontmatter input[type="text"] {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: var(--text-primary);
-  outline: none;
-  min-width: 200px;
-}
-
-.modal-frontmatter input[type="text"]:focus {
-  border-color: var(--accent);
-}
-
-.modal-frontmatter input[type="checkbox"] {
-  accent-color: var(--accent);
-}
-
 /* Create button in section headers */
 .btn-create {
   display: inline-flex;
@@ -1862,7 +1946,10 @@ body {
   vertical-align: middle;
 }
 
-.btn-create:hover { border-color: var(--accent); color: var(--accent); }
+.btn-create:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 /* Card action buttons */
 .card-delete {
@@ -1877,8 +1964,12 @@ body {
   transition: opacity 0.15s;
 }
 
-.harness-card:hover .card-delete { opacity: 1; }
-.card-delete:hover { color: var(--red); }
+.harness-card:hover .card-delete {
+  opacity: 1;
+}
+.card-delete:hover {
+  color: var(--red);
+}
 
 /* ========== Live Usage (Statusline) ========== */
 .usage-grid {

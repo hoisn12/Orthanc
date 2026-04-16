@@ -78,17 +78,6 @@
       </div>
     </div>
 
-    <!-- File Viewer Modal -->
-    <div id="fileModal" class="modal-overlay" style="display: none">
-      <div class="modal">
-        <div class="modal-header">
-          <span class="modal-title" id="modalTitle"></span>
-          <button class="modal-close" id="modalClose">&times;</button>
-        </div>
-        <pre class="modal-body" id="modalBody"></pre>
-      </div>
-    </div>
-
     <!-- Folder Picker Modal -->
     <div id="folderPickerModal" class="modal-overlay" style="display: none">
       <div class="modal folder-picker-modal">
@@ -116,40 +105,36 @@
       </div>
     </div>
 
-  <!-- File Viewer / Editor Modal -->
-  <div id="fileModal" class="modal-overlay" style="display:none">
-    <div class="modal modal-wide">
-      <div class="modal-header">
-        <span class="modal-title" id="modalTitle"></span>
-        <div class="modal-actions">
-          <button id="modalEditBtn" class="btn-sm" style="display:none">Edit</button>
-          <button id="modalSaveBtn" class="btn-sm btn-install" style="display:none">Save</button>
-          <button id="modalCancelBtn" class="btn-sm" style="display:none">Cancel</button>
-          <button class="modal-close" id="modalClose">&times;</button>
+    <!-- File Viewer / Editor Dialog -->
+    <dialog id="fileDialog" class="dialog">
+      <div class="dialog-header">
+        <span class="dialog-title" id="dialogTitle"></span>
+        <div class="dialog-actions">
+          <button id="dialogEditBtn" class="btn-sm" style="display: none">Edit</button>
+          <button id="dialogSaveBtn" class="btn-sm btn-install" style="display: none">Save</button>
+          <button id="dialogCancelBtn" class="btn-sm" style="display: none">Cancel</button>
+          <button class="dialog-close" id="dialogClose">&times;</button>
         </div>
       </div>
-      <div id="modalFrontmatter" class="modal-frontmatter" style="display:none"></div>
-      <pre class="modal-body" id="modalBody"></pre>
-      <textarea class="modal-editor" id="modalEditor" style="display:none"></textarea>
-    </div>
-  </div>
+      <div id="dialogFrontmatter" class="dialog-frontmatter" style="display: none"></div>
+      <pre class="dialog-body" id="dialogBody"></pre>
+      <textarea class="dialog-editor" id="dialogEditor" style="display: none"></textarea>
+    </dialog>
 
-  <!-- Create Modal -->
-  <div id="createModal" class="modal-overlay" style="display:none">
-    <div class="modal modal-wide">
-      <div class="modal-header">
-        <span class="modal-title" id="createModalTitle">New Skill</span>
-        <div class="modal-actions">
+    <!-- Create Skill Dialog -->
+    <dialog id="createDialog" class="dialog">
+      <div class="dialog-header">
+        <span class="dialog-title" id="createDialogTitle">New Skill</span>
+        <div class="dialog-actions">
           <button id="createSaveBtn" class="btn-sm btn-install">Create</button>
           <button id="createCancelBtn" class="btn-sm">Cancel</button>
         </div>
       </div>
-      <div id="createForm" class="modal-frontmatter"></div>
-      <textarea class="modal-editor" id="createEditor" placeholder="Content..."></textarea>
-    </div>
-  </div>
+      <div id="createForm" class="dialog-frontmatter"></div>
+      <textarea class="dialog-editor" id="createEditor" placeholder="Content..."></textarea>
+    </dialog>
 
-  <script src="/vendor/marked.umd.js"></script>
-  <script src="/app.js"></script>
-</body>
+    <script src="/vendor/marked.umd.js"></script>
+    <script src="/app.js"></script>
+  </body>
 </html>

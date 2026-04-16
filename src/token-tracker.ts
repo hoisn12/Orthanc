@@ -33,7 +33,11 @@ interface TokenUsageResult {
   sessions: TokenUsageSession[];
 }
 
-export function getTokenUsage(provider: Provider, tokenStore: TokenStore, { from, to }: { from?: string | null; to?: string | null } = {}): TokenUsageResult {
+export function getTokenUsage(
+  provider: Provider,
+  tokenStore: TokenStore,
+  { from, to }: { from?: string | null; to?: string | null } = {},
+): TokenUsageResult {
   const data = tokenStore.queryAggregated({ from, to });
 
   if (data.messageCount === 0) return emptyResult();
@@ -121,18 +125,38 @@ export function getTokenUsage(provider: Provider, tokenStore: TokenStore, { from
 
 // ── Helpers exported for token-sync.js ─────────────────────
 
+/** Normalize a path (or encoded dir name) into comparable alphanumeric tokens */
+function toTokens(s: string): string[] {
+  return s.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+}
+
 export function findProjectDir(projectsDir: string, projectRoot: string): string | null {
   if (!fs.existsSync(projectsDir)) return null;
 
+  // 1. Exact match (fast path)
   const encoded = projectRoot.replaceAll('/', '-');
   const target = path.join(projectsDir, encoded);
   if (fs.existsSync(target)) return target;
 
   try {
     const dirs = fs.readdirSync(projectsDir);
-    const match = dirs.find((d) => {
+
+    // 2. Legacy decoded match
+    const legacyMatch = dirs.find((d) => {
       const decoded = d.replaceAll('-', '/');
       return decoded.endsWith(projectRoot) || projectRoot.endsWith(decoded.slice(1));
+    });
+    if (legacyMatch) return path.join(projectsDir, legacyMatch);
+
+    // 3. Token-based fuzzy match — handles encoding differences
+    //    (e.g. `.claude/worktrees/feat+name` vs `--claude-worktrees-feat-name`)
+    const cwdTokens = toTokens(projectRoot);
+    if (cwdTokens.length === 0) return null;
+
+    const cwdSuffix = cwdTokens.join('\0');
+    const match = dirs.find((d) => {
+      const dirTokens = toTokens(d);
+      return dirTokens.join('\0') === cwdSuffix;
     });
     if (match) return path.join(projectsDir, match);
   } catch {
