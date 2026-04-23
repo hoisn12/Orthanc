@@ -20,6 +20,7 @@ const state = {
   loadingOlder: false,
   noMoreEvents: false,
   tokenFilter: { preset: 'all', from: null, to: null },
+  cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
 };
 
@@ -434,7 +435,7 @@ function renderSessionConfig() {
   let html = `<div class="panel-title" style="margin-top:14px">Session Config <span style="color:var(--text-muted);font-size:11px">${cfg.projectName || ''}</span></div>`;
 
   // Instruction files — prefer actual loaded data from InstructionsLoaded hook
-  const loaded = cfg.loadedInstructions || [];
+  const loaded = Array.from(new Map((cfg.loadedInstructions || []).map((i) => [i.path, i])).values());
   const mdFiles = cfg.claudeMdFiles || [];
   if (loaded.length > 0) {
     html += `<div class="sc-section"><div class="sc-label">Instruction Files <span class="sc-count">${loaded.length}</span></div>`;
@@ -458,53 +459,9 @@ function renderSessionConfig() {
     html += `</div>`;
   }
 
-  // Skills
-  const skills = (cfg.skills || []).filter((s) => s.active);
-  if (skills.length > 0) {
-    html += `<div class="sc-section"><div class="sc-label">Skills <span class="sc-count">${skills.length}</span></div>`;
-    for (const sk of skills) {
-      const badges = [];
-      if (sk.userInvocable) badges.push('<span class="sc-badge sc-badge-invoke">invocable</span>');
-      if (sk.symlink) badges.push('<span class="sc-badge sc-badge-symlink">symlink</span>');
-      html += `<div class="sc-card"${sk.filePath ? ` data-file="${sk.filePath}"` : ''}>
-        <span class="sc-card-name">${sk.name}</span> ${badges.join(' ')}
-        ${sk.description ? `<span class="sc-card-desc">${sk.description}</span>` : ''}
-      </div>`;
-    }
-    html += `</div>`;
-  }
-
-  // Rules
-  const rules = cfg.rules || [];
-  if (rules.length > 0) {
-    html += `<div class="sc-section"><div class="sc-label">Rules <span class="sc-count">${rules.length}</span></div>`;
-    for (const r of rules) {
-      const badges = [];
-      if (r.alwaysApply) badges.push('<span class="sc-badge sc-badge-always">always</span>');
-      if (r.globs.length > 0) badges.push(...r.globs.map((g) => `<span class="sc-badge sc-badge-glob">${g}</span>`));
-      html += `<div class="sc-card"${r.filePath ? ` data-file="${r.filePath}"` : ''}>
-        <span class="sc-card-name">${r.name}</span> ${badges.join(' ')}
-        ${r.summary ? `<span class="sc-card-desc">${r.summary}</span>` : ''}
-      </div>`;
-    }
-    html += `</div>`;
-  }
-
-  // Agents
-  const agents = cfg.agents || [];
-  if (agents.length > 0) {
-    html += `<div class="sc-section"><div class="sc-label">Agents <span class="sc-count">${agents.length}</span></div>`;
-    for (const a of agents) {
-      html += `<div class="sc-card"${a.filePath ? ` data-file="${a.filePath}"` : ''}>
-        <span class="sc-card-name">${a.name}</span>
-        ${a.description ? `<span class="sc-card-desc">${a.description}</span>` : ''}
-      </div>`;
-    }
-    html += `</div>`;
-  }
-
-  if (mdFiles.length === 0 && skills.length === 0 && rules.length === 0 && agents.length === 0) {
-    html += '<span style="color:var(--text-muted);font-size:12px">No config found for this session\'s project</span>';
+  if (loaded.length === 0 && mdFiles.length === 0) {
+    html +=
+      '<span style="color:var(--text-muted);font-size:12px">No instruction files found for this session\'s project</span>';
   }
 
   el.innerHTML = html;
@@ -672,6 +629,13 @@ function extractDetail(event) {
     const msg = typeof p.prompt === 'string' ? p.prompt : '';
     return `<div class="event-user-msg event-md">${renderMd(msg)}</div>`;
   }
+  // Microcompaction
+  if (type === 'context-compacted') {
+    const from = p.from != null ? Number(p.from).toFixed(0) : '?';
+    const to = p.to != null ? Number(p.to).toFixed(0) : '?';
+    return `<span class="event-compact">\u26a1 context compacted: ${from}% \u2192 ${to}%</span>`;
+  }
+
   // Instructions loaded
   if (type === 'instructions-loaded' && p.file_path) {
     const mem = p.memory_type ? ` [${p.memory_type}]` : '';
@@ -1560,8 +1524,13 @@ async function fetchTokenUsage() {
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     const qs = params.toString();
-    const res = await fetch('/api/tokens' + (qs ? '?' + qs : ''));
+    const [res, healthRes] = await Promise.all([
+      fetch('/api/tokens' + (qs ? '?' + qs : '')),
+      fetch('/api/tokens/cache-health'),
+    ]);
     state.tokens = await res.json();
+    const healthData = await healthRes.json();
+    state.cacheHealth = Object.fromEntries((healthData.sessions || []).map((s) => [s.sessionId, s.status]));
     renderTokenUsage();
     renderSessions();
   } catch {
@@ -1719,6 +1688,11 @@ function renderTokenUsage() {
           })
         : '\u2014';
       const id = s.sessionId ? s.sessionId.slice(0, 8) : s.file;
+      const cacheStatus = s.sessionId ? state.cacheHealth[s.sessionId] || 'unknown' : 'unknown';
+      const cacheBadge =
+        cacheStatus === 'unknown'
+          ? ''
+          : `<span class="cache-badge cache-${cacheStatus}">${cacheStatus === 'broken' ? '⚠' : '●'} ${cacheStatus}</span>`;
       return `<div class="token-session-row">
       <span class="token-session-id" title="${s.sessionId || s.file}">${id}</span>
       <span class="token-session-time">${time}</span>
@@ -1729,6 +1703,7 @@ function renderTokenUsage() {
       <span class="token-session-cost">$${s.cost.toFixed(2)}</span>
       <span class="token-session-msgs">${s.messageCount} msgs</span>
       <span class="token-session-model">${s.models.join(', ')}</span>
+      ${cacheBadge}
     </div>`;
     })
     .join('');
@@ -1827,13 +1802,10 @@ function renderRealtimeMetrics(t) {
   const lat = t.realtimeLatency;
   const hasLatency = lat && lat.count > 0;
   const hasMetrics =
-    m &&
-    (hasLatency ||
-      Object.keys(m.modelBreakdown || {}).length > 0 ||
-      Object.keys(m.toolStats || {}).length > 0 ||
-      (m.errorRate?.total || 0) > 0);
-
-  if (!hasMetrics) return '';
+    hasLatency ||
+    Object.keys(m?.modelBreakdown || {}).length > 0 ||
+    Object.keys(m?.toolStats || {}).length > 0 ||
+    (m?.errorRate?.total || 0) > 0;
 
   // --- Latency bars ---
   let latencyHTML = '';
@@ -1905,7 +1877,7 @@ function renderRealtimeMetrics(t) {
 
   // --- Tool stats ---
   const tools = m?.toolStats || {};
-  let toolHTML = '';
+  let toolHTML;
   if (Object.keys(tools).length > 0) {
     const rows = Object.entries(tools)
       .sort((a, b) => b[1].count - a[1].count)
@@ -1915,35 +1887,56 @@ function renderRealtimeMetrics(t) {
         const errClass = d.errorRate > 0.1 ? ' rt-err-high' : d.errorRate > 0 ? ' rt-err-warn' : '';
         return `<div class="rt-table-row">
           <span class="rt-table-name">${name}</span>
-          <span class="rt-table-stat">${d.count}x</span>
-          <span class="rt-table-stat">${fmtMs(d.avg)} avg</span>
-          <span class="rt-table-stat">${fmtMs(d.p95)} p95</span>
-          <span class="rt-table-stat${errClass}">${errPct}% err</span>
+          <span class="rt-table-cell"><span class="rt-cell-label">calls</span><span class="rt-cell-val">${d.count}</span></span>
+          <span class="rt-table-cell"><span class="rt-cell-label">avg</span><span class="rt-cell-val">${fmtMs(d.avg)}</span></span>
+          <span class="rt-table-cell"><span class="rt-cell-label">p95</span><span class="rt-cell-val">${fmtMs(d.p95)}</span></span>
+          <span class="rt-table-cell"><span class="rt-cell-label">err</span><span class="rt-cell-val${errClass}">${errPct}%</span></span>
         </div>`;
       })
       .join('');
-    toolHTML = `<div class="rt-card">
+    toolHTML = `<div class="rt-card rt-card-wide">
       <div class="rt-card-title">Tool Performance</div>
+      <div class="rt-table-header">
+        <span class="rt-table-name">Tool</span>
+        <span class="rt-th">Calls</span>
+        <span class="rt-th">Avg</span>
+        <span class="rt-th">P95</span>
+        <span class="rt-th">Errors</span>
+      </div>
       ${rows}
+    </div>`;
+  } else {
+    toolHTML = `<div class="rt-card rt-card-wide">
+      <div class="rt-card-title">Tool Performance</div>
+      <div class="rt-empty">No data yet — tool usage will appear here</div>
     </div>`;
   }
 
   // --- Error rate ---
   const errors = m?.errorRate || {};
-  let errorHTML = '';
+  let errorHTML;
   if (errors.total > 0) {
     const rows = Object.entries(errors.byType)
       .sort((a, b) => b[1] - a[1])
       .map(
         ([type, count]) => `<div class="rt-table-row">
         <span class="rt-table-name rt-err-type">${type}</span>
-        <span class="rt-table-stat">${count}x</span>
+        <span class="rt-table-cell"><span class="rt-cell-label">count</span><span class="rt-cell-val">${count}</span></span>
       </div>`,
       )
       .join('');
     errorHTML = `<div class="rt-card rt-card-error">
       <div class="rt-card-title">API Errors <span class="rt-err-badge">${errors.total}</span></div>
+      <div class="rt-table-header">
+        <span class="rt-table-name">Error Type</span>
+        <span class="rt-th">Count</span>
+      </div>
       ${rows}
+    </div>`;
+  } else {
+    errorHTML = `<div class="rt-card">
+      <div class="rt-card-title">API Errors</div>
+      <div class="rt-empty">No errors</div>
     </div>`;
   }
 
