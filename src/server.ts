@@ -26,6 +26,31 @@ interface ServerInstance {
   stop: () => void;
 }
 
+type CacheHealthStatus = 'healthy' | 'degraded' | 'broken' | 'unknown';
+
+function computeCacheHealth(trend: { cacheRead: number; input: number }[]): CacheHealthStatus {
+  // Filter out messages where we can't compute a meaningful hit rate
+  const valid = trend.filter((m) => m.input + m.cacheRead > 0);
+  if (valid.length < 3) return 'unknown';
+
+  const hitRate = (m: { cacheRead: number; input: number }) => m.cacheRead / (m.input + m.cacheRead);
+
+  const recentMsgs = valid.slice(-5);
+  const earlierMsgs = valid.slice(0, -5);
+
+  const avg = (msgs: typeof valid) => msgs.reduce((s, m) => s + hitRate(m), 0) / msgs.length;
+
+  const recentAvg = avg(recentMsgs);
+
+  if (earlierMsgs.length >= 3) {
+    const earlierAvg = avg(earlierMsgs);
+    if (earlierAvg >= 0.3 && recentAvg < 0.1) return 'broken';
+  }
+
+  if (recentAvg < 0.2) return 'degraded';
+  return 'healthy';
+}
+
 export function createServer({
   projectRoot,
   port = 7432,
@@ -42,6 +67,8 @@ export function createServer({
   const eventStore = new EventStore(2000);
   const metricsStore = new MetricsStore();
   const otelReceiver = new OtelReceiver(eventStore, metricsStore);
+  const toolStartTimes = new Map<string, number>(); // key: `${pid ?? sessionId}:${toolName}`
+  const MAX_TOOL_START_ENTRIES = 1000;
   const tokenStore = new TokenStore();
 
   // Prepared statements
@@ -262,6 +289,28 @@ export function createServer({
       sessionId: sessionId || null,
       pid: pid || null,
     });
+
+    // Hook → MetricsStore bridge
+    const toolKey = `${pid ?? sessionId}:${(payload.tool_name as string) || 'unknown'}`;
+    if (type === 'pre-tool-use') {
+      if (toolStartTimes.size >= MAX_TOOL_START_ENTRIES) {
+        const firstKey = toolStartTimes.keys().next().value;
+        if (firstKey !== undefined) toolStartTimes.delete(firstKey);
+      }
+      toolStartTimes.set(toolKey, Date.now());
+    } else if (type === 'post-tool-use') {
+      const toolName = (payload.tool_name as string) || 'unknown';
+      const startTime = toolStartTimes.get(toolKey);
+      const durationMs = startTime ? Date.now() - startTime : 0;
+      toolStartTimes.delete(toolKey);
+      const hasError = !!(payload.error || (payload.tool_response as Record<string, unknown>)?.error);
+      metricsStore.recordToolExecution({ toolName, durationMs, success: !hasError });
+      if (hasError) {
+        const errType = (payload.error as string) || 'tool_error';
+        metricsStore.recordApiError({ model: 'unknown', errorType: errType, statusCode: 0 });
+      }
+    }
+
     res.json({ ok: true, id: event.id });
   });
 
@@ -355,6 +404,25 @@ export function createServer({
     }
   });
 
+  // Cache health per session
+  app.get('/api/tokens/cache-health', (_req: Request, res: Response) => {
+    try {
+      const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const data = tokenStore.queryAggregated({ from: cutoff24h });
+      const sessions = data.sessions.slice(0, 20);
+
+      const result = sessions.map((s) => {
+        const trend = tokenStore.getSessionCacheTrend(s.sessionId);
+        const status = computeCacheHealth(trend);
+        return { sessionId: s.sessionId, status };
+      });
+
+      res.json({ sessions: result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Hook management
   app.get('/api/hooks/status', (_req: Request, res: Response) => {
     try {
@@ -416,6 +484,27 @@ export function createServer({
           ctx.used_percentage = prevCtx.used_percentage;
           ctx.remaining_percentage = prevCtx.remaining_percentage;
           ctx.current_usage = prevCtx.current_usage;
+        }
+      }
+    }
+
+    // Microcompaction detection: ctx% drops >50pp compared to previous value
+    const newCtxPct = ctx?.used_percentage as number | null | undefined;
+    if (newCtxPct != null) {
+      const prevEntry = getUsageBySession.get(sessionId) as { data: string } | undefined;
+      if (prevEntry) {
+        const prevCtx = (JSON.parse(prevEntry.data) as Record<string, unknown>)?.context_window as
+          | Record<string, unknown>
+          | null
+          | undefined;
+        const prevPct = prevCtx?.used_percentage as number | null | undefined;
+        if (prevPct != null && prevPct - newCtxPct > 50) {
+          eventStore.add({
+            type: 'context-compacted',
+            payload: { from: prevPct, to: newCtxPct, session_id: sessionId },
+            sessionId,
+            pid: session?.pid ?? null,
+          });
         }
       }
     }

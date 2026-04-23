@@ -42,6 +42,13 @@ interface SyncStateRow {
   byte_offset: number;
 }
 
+interface CacheTrendRow {
+  timestamp: string;
+  cache_read: number;
+  cache_create: number;
+  input: number;
+}
+
 interface SessionMetaRow {
   session_id: string;
   cwd: string | null;
@@ -55,6 +62,7 @@ export class TokenStore {
   private _getSyncState: Database.Statement;
   private _setSyncState: Database.Statement;
   private _getSessionMeta: Database.Statement;
+  private _getCacheTrend: Database.Statement;
 
   constructor() {
     this.db = getDb();
@@ -71,6 +79,9 @@ export class TokenStore {
     );
     this._getSessionMeta = this.db.prepare(
       'SELECT session_id, cwd, started_at FROM token_usage WHERE session_file = ? LIMIT 1',
+    );
+    this._getCacheTrend = this.db.prepare(
+      'SELECT timestamp, cache_read, cache_create, input FROM token_usage WHERE session_id = ? ORDER BY timestamp ASC LIMIT 50',
     );
   }
 
@@ -241,6 +252,14 @@ export class TokenStore {
       cwd: row.cwd || '',
       startedAt: row.started_at || '',
     };
+  }
+
+  getSessionCacheTrend(sessionId: string): { timestamp: string; cacheRead: number; input: number }[] {
+    const rows = this._getCacheTrend.all(sessionId) as CacheTrendRow[];
+    // Exclude warming-up messages: cache_create > 0 AND cache_read = 0
+    return rows
+      .filter((r) => !(r.cache_create > 0 && r.cache_read === 0))
+      .map((r) => ({ timestamp: r.timestamp, cacheRead: r.cache_read, input: r.input }));
   }
 }
 
