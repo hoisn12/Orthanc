@@ -105,6 +105,50 @@
       </div>
     </div>
 
+    <!-- Initial Project Setup Modal -->
+    <div id="projectSetupModal" class="modal-overlay" style="display: none">
+      <div class="modal project-setup-modal">
+        <div class="modal-header">
+          <span class="modal-title">Set Default Project Folder</span>
+        </div>
+        <div class="project-setup-body">
+          <div class="settings-page">
+            <div class="settings-group">
+              <div class="settings-group-title">Welcome</div>
+              <div class="settings-group-body">
+                <div class="project-setup-description">
+                  Choose the default project folder to monitor when Orthanc starts.
+                </div>
+                <div class="project-setup-description">
+                  You can change this later in <strong>Settings → Project Path</strong>.
+                </div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-title">Project</div>
+              <div class="settings-group-body">
+                <div class="settings-field">
+                  <label class="settings-label">Project Path</label>
+                  <div class="settings-input-row">
+                    <span
+                      class="settings-value"
+                      id="projectSetupPath"
+                      style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
+                      title=""
+                    ></span>
+                    <button id="projectSetupBrowse" class="btn-sm btn-install">Browse...</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="project-setup-actions">
+              <button id="projectSetupContinue" class="btn-sm btn-install">Continue</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- File Viewer / Editor Dialog -->
     <dialog id="fileDialog" class="dialog">
       <div class="dialog-header">

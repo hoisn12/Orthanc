@@ -22,6 +22,7 @@ const state = {
   tokenFilter: { preset: 'all', from: null, to: null },
   cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
+  projectSetup: { explicitProject: true, hasSavedProject: true, projectPath: null },
 };
 
 // --- Project switch ---
@@ -39,6 +40,9 @@ async function switchProject(projectPath) {
       return;
     }
     state.config = await res.json();
+    state.projectSetup.hasSavedProject = true;
+    state.projectSetup.projectPath = projectPath;
+    hideProjectSetupModal();
     renderHarness();
     await fetchSessions();
     await fetchTokenUsage();
@@ -47,6 +51,15 @@ async function switchProject(projectPath) {
     }
   } catch (err) {
     alert(`Failed to switch project: ${err.message}`);
+  }
+}
+
+async function fetchProjectSetupState() {
+  try {
+    const res = await fetch('/api/project/default');
+    state.projectSetup = await res.json();
+  } catch {
+    state.projectSetup = { explicitProject: true, hasSavedProject: true, projectPath: null };
   }
 }
 
@@ -970,6 +983,45 @@ function initFolderPickerHandlers() {
     closeFolderPicker();
     await switchProject(selectedPath);
     renderSettings();
+    updateProjectSetupPath(selectedPath);
+  });
+}
+
+function updateProjectSetupPath(projectPath) {
+  const pathEl = document.getElementById('projectSetupPath');
+  if (!pathEl) return;
+  const value = projectPath || 'Not set';
+  pathEl.textContent = value;
+  pathEl.title = value;
+}
+
+function showProjectSetupModal() {
+  const modal = document.getElementById('projectSetupModal');
+  if (!modal) return;
+  updateProjectSetupPath(state.config?.projectRoot || '/');
+  modal.style.display = 'flex';
+}
+
+function hideProjectSetupModal() {
+  const modal = document.getElementById('projectSetupModal');
+  if (!modal) return;
+  modal.style.display = 'none';
+}
+
+function initProjectSetupHandlers() {
+  const browseBtn = document.getElementById('projectSetupBrowse');
+  const continueBtn = document.getElementById('projectSetupContinue');
+  if (!browseBtn || !continueBtn) return;
+
+  browseBtn.addEventListener('click', () => {
+    const current = state.config?.projectRoot || '/';
+    openFolderPicker(current);
+  });
+
+  continueBtn.addEventListener('click', async () => {
+    const current = state.config?.projectRoot;
+    if (!current) return;
+    await switchProject(current);
   });
 }
 
@@ -2026,6 +2078,7 @@ function isCodex() {
 }
 
 async function init() {
+  await fetchProjectSetupState();
   await fetchProvider();
   await fetchConfig();
   await fetchSessions();
@@ -2043,6 +2096,11 @@ async function init() {
   initDialogHandlers();
   initCreateDialogHandlers();
   initFolderPickerHandlers();
+  initProjectSetupHandlers();
+
+  if (!state.projectSetup.explicitProject && !state.projectSetup.hasSavedProject) {
+    showProjectSetupModal();
+  }
 
   // Infinite scroll for feed
   const feedPanel = document.getElementById('feed').parentElement;

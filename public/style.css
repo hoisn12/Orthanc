@@ -1844,6 +1844,26 @@ body {
   max-width: 560px;
 }
 
+.project-setup-modal {
+  max-width: 640px;
+}
+
+.project-setup-body {
+  padding: 16px;
+}
+
+.project-setup-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.project-setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 .folder-picker-body {
   padding: 12px 16px;
   display: flex;

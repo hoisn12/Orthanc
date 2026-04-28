@@ -142,6 +142,16 @@ export function createServer({
     }
   });
 
+  app.get('/api/project/default', (_req: Request, res: Response) => {
+    const saved = getSetting.get('projectPath') as { value: string } | undefined;
+    const hasSavedProject = Boolean(saved?.value && fs.existsSync(saved.value));
+    res.json({
+      explicitProject,
+      hasSavedProject,
+      projectPath: hasSavedProject ? saved?.value : null,
+    });
+  });
+
   app.get('/api/directories', (req: Request, res: Response) => {
     const dirPath = String(req.query.path || os.homedir());
     const showHidden = req.query.showHidden === 'true';
