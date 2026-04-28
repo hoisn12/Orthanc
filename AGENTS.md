@@ -40,7 +40,17 @@ TypeScript ESM을 사용하며 로컬 import는 기존 코드처럼 `.js` 확장
 
 ## Commit & Pull Request Guidelines
 
-커밋 메시지는 최근 이력과 같이 `feat:`, `fix:`, `docs:` prefix를 사용한다. PR에는 변경 요약, 관련 이슈, 실행한 검증 명령을 포함한다. `public/` UI 변경은 스크린샷이나 짧은 녹화 자료를 첨부한다.
+### 커밋 메시지
+
+- 형식: `<type>(<scope>): <설명>`
+- scope: fe, be, ds, infra 등
+- 티켓 번호가 대화 컨텍스트, 브랜치명, 또는 커밋에 존재하면 scope를 티켓 번호로 사용 (예: `feat(ABC-123): 설명`)
+
+### PR 생성
+
+- PR title: 70자 이내. 단일 커밋이면 커밋 메시지 재사용, 복수 커밋이면 전체 변경을 요약
+- 티켓 번호 scope 규칙은 커밋 메시지와 동일
+- 기존 PR이 있는 브랜치: `gh pr list --head <branch> --state open`으로 확인 후 push만 수행, 새 PR 생성하지 않음
 
 ## Work Instructions
 
@@ -53,3 +63,13 @@ TypeScript ESM을 사용하며 로컬 import는 기존 코드처럼 `.js` 확장
 ## Security & Configuration Tips
 
 훅 설치, 파일 읽기 API, 프로젝트 경로 처리 변경은 보안 영향을 먼저 확인한다. `data/`, 불필요한 `dist/` 변경, 로컬 credentials, 개인 Claude/Codex 설정은 커밋하지 않는다.
+
+## Pull request guidelines
+
+- Use a concise PR title.
+- Include:
+  - Summary
+  - Changes
+  - Tests
+  - Risk / rollback notes
+- Link the Linear issue in the PR body.
