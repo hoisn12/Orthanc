@@ -2,6 +2,10 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function getDefaultProjectSetupState() {
+  return { explicitProject: true, hasSavedProject: true, projectPath: null };
+}
+
 // State
 const state = {
   config: null,
@@ -22,7 +26,7 @@ const state = {
   tokenFilter: { preset: 'all', from: null, to: null },
   cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
-  projectSetup: { explicitProject: true, hasSavedProject: true, projectPath: null },
+  projectSetup: getDefaultProjectSetupState(),
 };
 
 // --- Project switch ---
@@ -37,7 +41,7 @@ async function switchProject(projectPath) {
     if (!res.ok) {
       const err = await res.json();
       alert(`Failed to switch project: ${err.error}`);
-      return;
+      return false;
     }
     state.config = await res.json();
     state.projectSetup.hasSavedProject = true;
@@ -49,17 +53,30 @@ async function switchProject(projectPath) {
     if (document.getElementById('page-settings')?.classList.contains('active')) {
       await renderSettings();
     }
+    return true;
   } catch (err) {
     alert(`Failed to switch project: ${err.message}`);
+    return false;
   }
 }
 
 async function fetchProjectSetupState() {
   try {
     const res = await fetch('/api/project/default');
-    state.projectSetup = await res.json();
+    if (!res.ok) throw new Error(`Project setup request failed: ${res.status}`);
+
+    const setup = await res.json();
+    if (typeof setup.explicitProject !== 'boolean' || typeof setup.hasSavedProject !== 'boolean') {
+      throw new Error('Invalid project setup response');
+    }
+
+    state.projectSetup = {
+      explicitProject: setup.explicitProject,
+      hasSavedProject: setup.hasSavedProject,
+      projectPath: typeof setup.projectPath === 'string' ? setup.projectPath : null,
+    };
   } catch {
-    state.projectSetup = { explicitProject: true, hasSavedProject: true, projectPath: null };
+    state.projectSetup = getDefaultProjectSetupState();
   }
 }
 
@@ -981,9 +998,11 @@ function initFolderPickerHandlers() {
   document.getElementById('folderPickerSelect').addEventListener('click', async () => {
     const selectedPath = document.getElementById('folderPickerPathInput').value;
     closeFolderPicker();
-    await switchProject(selectedPath);
-    renderSettings();
-    updateProjectSetupPath(selectedPath);
+    const switched = await switchProject(selectedPath);
+    if (switched) {
+      renderSettings();
+      updateProjectSetupPath(state.config?.projectRoot || selectedPath);
+    }
   });
 }
 
