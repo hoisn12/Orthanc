@@ -87,7 +87,7 @@ export function createServer({
     }
   }
   let provider = explicitProject ? initialProvider : detectProvider({ projectRoot: currentProject });
-  const sessionWatcher = new SessionWatcher(provider, currentProject, 5000);
+  const sessionWatcher = new SessionWatcher(provider, null, 5000);
 
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '..', '..', 'public')));
@@ -129,7 +129,7 @@ export function createServer({
     setSetting.run('projectPath', resolved);
     provider = detectProvider({ projectRoot: resolved });
     sessionWatcher.provider = provider;
-    sessionWatcher.setProjectFilter(resolved);
+    sessionWatcher.setProjectFilter(null);
     jsonlWatcher.setProjectRoot(resolved);
     try {
       const config = parseProjectConfig(provider, resolved);
@@ -567,14 +567,13 @@ export function createServer({
     sessionWatcher,
     eventStore,
     tokenStore,
-    projectRoot: currentProject,
     pollInterval: 1000,
   });
 
   // Start
   async function start() {
     // Initial sync: populate DB from JSONL files
-    await syncAll(provider, currentProject, tokenStore);
+    await syncAll(provider, null, tokenStore);
     sessionWatcher.start();
     jsonlWatcher.start();
     return new Promise<import('node:http').Server>((resolve) => {

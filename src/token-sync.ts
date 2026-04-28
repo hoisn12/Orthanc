@@ -7,15 +7,20 @@ import type { TokenStore } from './token-store.js';
 import type { UsageRecord, TokenRecord } from './types.js';
 
 /**
- * Sync all JSONL files for a project into the token_usage DB table.
+ * Sync JSONL files into the token_usage DB table.
+ * When projectRoot is null, all known projects are scanned.
  * Uses byte-offset tracking to only parse new data on subsequent calls.
  */
-export async function syncAll(provider: Provider, projectRoot: string, tokenStore: TokenStore): Promise<{ synced: number; files: number }> {
+export async function syncAll(
+  provider: Provider,
+  projectRoot: string | null,
+  tokenStore: TokenStore,
+): Promise<{ synced: number; files: number }> {
   const projectsDir = provider.getProjectsDir();
-  const projectDir = findProjectDir(projectsDir, projectRoot);
-  if (!projectDir) return { synced: 0, files: 0 };
+  const targetDir = projectRoot ? findProjectDir(projectsDir, projectRoot) : projectsDir;
+  if (!targetDir) return { synced: 0, files: 0 };
 
-  const jsonlFiles = collectJsonlFiles(projectDir);
+  const jsonlFiles = collectJsonlFiles(targetDir);
   if (jsonlFiles.length === 0) return { synced: 0, files: 0 };
 
   let totalSynced = 0;

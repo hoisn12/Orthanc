@@ -18,7 +18,6 @@ interface JsonlWatcherOptions {
   sessionWatcher: SessionWatcher;
   eventStore: EventStore;
   tokenStore: TokenStore;
-  projectRoot: string;
   pollInterval?: number;
 }
 
@@ -31,33 +30,21 @@ export class JsonlWatcher {
   sessionWatcher: SessionWatcher;
   eventStore: EventStore;
   tokenStore: TokenStore;
-  projectRoot: string;
   pollInterval: number;
   timer: ReturnType<typeof setInterval> | null;
   fileState: Map<string, FileState>;
-  projectDir: string | null;
 
-  constructor({
-    provider,
-    sessionWatcher,
-    eventStore,
-    tokenStore,
-    projectRoot,
-    pollInterval = 1000,
-  }: JsonlWatcherOptions) {
+  constructor({ provider, sessionWatcher, eventStore, tokenStore, pollInterval = 1000 }: JsonlWatcherOptions) {
     this.provider = provider;
     this.sessionWatcher = sessionWatcher;
     this.eventStore = eventStore;
     this.tokenStore = tokenStore;
-    this.projectRoot = projectRoot;
     this.pollInterval = pollInterval;
     this.timer = null;
     this.fileState = new Map();
-    this.projectDir = null;
   }
 
   start(): void {
-    this.projectDir = findProjectDir(this.provider.getProjectsDir(), this.projectRoot);
     this.poll();
     this.timer = setInterval(() => this.poll(), this.pollInterval);
   }
@@ -70,14 +57,11 @@ export class JsonlWatcher {
   }
 
   setProjectRoot(projectRoot: string): void {
-    this.projectRoot = projectRoot;
+    void projectRoot;
     this.fileState.clear();
-    this.projectDir = findProjectDir(this.provider.getProjectsDir(), this.projectRoot);
   }
 
   poll(): void {
-    if (!this.projectDir) return;
-
     const activeSessions = this.sessionWatcher.getSessions();
     if (activeSessions.length === 0) return;
 
@@ -92,11 +76,11 @@ export class JsonlWatcher {
     for (const session of activeSessions) {
       if (!session.sessionId) continue;
       // Try session's own cwd first (handles worktree sessions),
-      // then fall back to the main project dir
+      // and skip if mapping cannot be resolved.
       const sessionDir = session.cwd ? findProjectDir(projectsDir, session.cwd) : null;
-      const dir = sessionDir || this.projectDir;
+      if (!sessionDir) continue;
       const effectiveId = session.activeSessionId || session.sessionId;
-      const filePath = path.join(dir, `${effectiveId}.jsonl`);
+      const filePath = path.join(sessionDir, `${effectiveId}.jsonl`);
       this.pollFile(filePath, session);
     }
   }

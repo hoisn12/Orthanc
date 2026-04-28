@@ -4,14 +4,13 @@ import type { SessionInfo } from './types.js';
 
 export class SessionWatcher {
   provider: Provider;
-  projectFilter: string | null;
   pollInterval: number;
   sessions: Map<number, SessionInfo>;
   timer: ReturnType<typeof setInterval> | null;
 
   constructor(provider: Provider, projectFilter: string | null = null, pollInterval = 5000) {
+    void projectFilter;
     this.provider = provider;
-    this.projectFilter = projectFilter ? path.resolve(projectFilter) : null;
     this.pollInterval = pollInterval;
     this.sessions = new Map();
     this.timer = null;
@@ -43,8 +42,6 @@ export class SessionWatcher {
         if (!data) continue;
         const pid = data.pid;
         currentPids.add(pid);
-
-        if (this.projectFilter && !isSubpath(data.cwd, this.projectFilter)) continue;
 
         const alive = isProcessAlive(pid);
         if (!alive) continue;
@@ -78,7 +75,7 @@ export class SessionWatcher {
   }
 
   setProjectFilter(projectPath: string | null): void {
-    this.projectFilter = projectPath ? path.resolve(projectPath) : null;
+    void projectPath;
     this.sessions.clear();
     this.poll();
   }
@@ -115,12 +112,6 @@ export class SessionWatcher {
     }
     return best;
   }
-}
-
-function isSubpath(child: string, parent: string): boolean {
-  const normalizedChild = child.endsWith('/') ? child : child + '/';
-  const normalizedParent = parent.endsWith('/') ? parent : parent + '/';
-  return normalizedChild === normalizedParent || normalizedChild.startsWith(normalizedParent);
 }
 
 function isProcessAlive(pid: number): boolean {
