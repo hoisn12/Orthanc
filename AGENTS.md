@@ -73,3 +73,17 @@ TypeScript ESM을 사용하며 로컬 import는 기존 코드처럼 `.js` 확장
   - Tests
   - Risk / rollback notes
 - Link the Linear issue in the PR body.
+
+## UI verification rules
+
+When a task changes the frontend:
+
+- Start the local app if needed.
+- Use Playwright to verify the changed screen.
+- Save screenshots under `artifacts/screenshots/`.
+- Always capture:
+  - desktop home
+  - mobile home
+  - affected feature completion screen
+- Mention screenshot paths in the final summary.
+- If the app cannot run, explain why and stop before claiming success.
