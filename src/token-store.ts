@@ -111,9 +111,13 @@ export class TokenStore {
 
   // ── Aggregated queries (no full-row loading) ──────────────
 
-  queryAggregated({ from, to }: { from?: string | null; to?: string | null } = {}) {
-    const where = buildWhere(from, to);
-    const params = buildParams(from, to);
+  queryAggregated({
+    from,
+    to,
+    model,
+    sessionId,
+  }: { from?: string | null; to?: string | null; model?: string | null; sessionId?: string | null } = {}) {
+    const { where, params } = buildTokenWhere({ from, to, model, sessionId });
 
     const totals = this.db
       .prepare(
@@ -261,18 +265,48 @@ export class TokenStore {
       .filter((r) => !(r.cache_create > 0 && r.cache_read === 0))
       .map((r) => ({ timestamp: r.timestamp, cacheRead: r.cache_read, input: r.input }));
   }
+
+  getDistinctModels(): string[] {
+    return (this.db.prepare('SELECT DISTINCT model FROM token_usage ORDER BY model').all() as { model: string }[]).map(
+      (r) => r.model,
+    );
+  }
+
+  getDistinctSessions(): { sessionId: string; cwd: string | null; startedAt: string | null }[] {
+    return (
+      this.db
+        .prepare(
+          'SELECT session_id, cwd, MIN(timestamp) as started_at FROM token_usage GROUP BY session_id ORDER BY started_at DESC',
+        )
+        .all() as { session_id: string; cwd: string | null; started_at: string | null }[]
+    ).map((r) => ({ sessionId: r.session_id, cwd: r.cwd, startedAt: r.started_at }));
+  }
 }
 
-function buildWhere(from?: string | null, to?: string | null): string {
-  if (from && to) return 'WHERE timestamp >= ? AND timestamp < ?';
-  if (from) return 'WHERE timestamp >= ?';
-  if (to) return 'WHERE timestamp < ?';
-  return '';
-}
-
-function buildParams(from?: string | null, to?: string | null): string[] {
+function buildTokenWhere(filters: {
+  from?: string | null;
+  to?: string | null;
+  model?: string | null;
+  sessionId?: string | null;
+}): { where: string; params: string[] } {
+  const conditions: string[] = [];
   const params: string[] = [];
-  if (from) params.push(from);
-  if (to) params.push(to);
-  return params;
+  if (filters.from) {
+    conditions.push('timestamp >= ?');
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    conditions.push('timestamp < ?');
+    params.push(filters.to);
+  }
+  if (filters.model) {
+    conditions.push('model = ?');
+    params.push(filters.model);
+  }
+  if (filters.sessionId) {
+    conditions.push('session_id = ?');
+    params.push(filters.sessionId);
+  }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  return { where, params };
 }

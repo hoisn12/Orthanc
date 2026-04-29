@@ -16,6 +16,7 @@ import { getDb, closeDb } from './db.js';
 import { TokenStore } from './token-store.js';
 import { syncAll } from './token-sync.js';
 import { JsonlWatcher } from './jsonl-watcher.js';
+import { TraceManager } from './trace-manager.js';
 import type { Provider } from './providers/provider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,8 +66,9 @@ export function createServer({
   const app = express();
   const db = getDb();
   const eventStore = new EventStore(2000);
-  const metricsStore = new MetricsStore();
-  const otelReceiver = new OtelReceiver(eventStore, metricsStore);
+  const metricsStore = new MetricsStore(3600000, { db });
+  const traceManager = new TraceManager();
+  const otelReceiver = new OtelReceiver(eventStore, metricsStore, traceManager);
   const toolStartTimes = new Map<string, number>(); // key: `${pid ?? sessionId}:${toolName}`
   const MAX_TOOL_START_ENTRIES = 1000;
   const tokenStore = new TokenStore();
@@ -237,6 +239,39 @@ export function createServer({
     res.json(eventStore.getOlderThan(before, limit, filter));
   });
 
+  // Trace endpoints
+  app.get('/api/traces', (req: Request, res: Response) => {
+    const limit = parseInt(String(req.query.limit)) || 50;
+    const filter: { pid?: number } = {};
+    if (req.query.pid) filter.pid = parseInt(String(req.query.pid));
+    res.json(eventStore.listTraceRoots(limit, filter));
+  });
+
+  app.get('/api/traces/:traceId', (req: Request, res: Response) => {
+    const traceId = String(req.params.traceId);
+    const events = eventStore.getByTraceId(traceId);
+    if (events.length === 0) {
+      res.status(404).json({ error: 'Trace not found' });
+      return;
+    }
+
+    // Build tree from flat list
+    type TreeNode = (typeof events)[number] & { children: TreeNode[] };
+    const byId = new Map<string, TreeNode>();
+    for (const e of events) {
+      byId.set(e.id, { ...e, children: [] });
+    }
+    let root: TreeNode | null = null;
+    for (const node of byId.values()) {
+      if (!node.parentId || !byId.has(node.parentId)) {
+        root = root || node;
+      } else {
+        byId.get(node.parentId)!.children.push(node);
+      }
+    }
+    res.json(root || events[0]);
+  });
+
   // SSE endpoint
   app.get('/api/events/stream', (req: Request, res: Response) => {
     res.writeHead(200, {
@@ -293,12 +328,21 @@ export function createServer({
       }
     }
 
+    const { traceId, parentId } = traceManager.assignTrace(type, pid, sessionId);
+
     const event = eventStore.add({
       type,
       payload,
       sessionId: sessionId || null,
       pid: pid || null,
+      traceId,
+      parentId,
     });
+
+    // After subagent-start is stored, push its event ID onto the trace span stack
+    if (type === 'subagent-start') {
+      traceManager.pushSpan(event.id, pid, sessionId);
+    }
 
     // Hook → MetricsStore bridge
     const toolKey = `${pid ?? sessionId}:${(payload.tool_name as string) || 'unknown'}`;
@@ -314,10 +358,15 @@ export function createServer({
       const durationMs = startTime ? Date.now() - startTime : 0;
       toolStartTimes.delete(toolKey);
       const hasError = !!(payload.error || (payload.tool_response as Record<string, unknown>)?.error);
-      metricsStore.recordToolExecution({ toolName, durationMs, success: !hasError });
+      metricsStore.recordToolExecution({ toolName, durationMs, success: !hasError, sessionId: sessionId || undefined });
       if (hasError) {
         const errType = (payload.error as string) || 'tool_error';
-        metricsStore.recordApiError({ model: 'unknown', errorType: errType, statusCode: 0 });
+        metricsStore.recordApiError({
+          model: 'unknown',
+          errorType: errType,
+          statusCode: 0,
+          sessionId: sessionId || undefined,
+        });
       }
     }
 
@@ -401,11 +450,21 @@ export function createServer({
     }
   });
 
-  // Token usage
+  // Token usage (with optional model/session filters)
   app.get('/api/tokens', (req: Request, res: Response) => {
     try {
-      const { from, to } = req.query as { from?: string; to?: string };
-      const usage = getTokenUsage(provider, tokenStore, { from: from || null, to: to || null });
+      const { from, to, model, session } = req.query as {
+        from?: string;
+        to?: string;
+        model?: string;
+        session?: string;
+      };
+      const usage = getTokenUsage(provider, tokenStore, {
+        from: from || null,
+        to: to || null,
+        model: model || null,
+        sessionId: session || null,
+      });
       (usage as any).realtime = metricsStore.getCostTimeline(60000);
       (usage as any).realtimeLatency = metricsStore.getApiLatencyStats(3600000);
       res.json(usage);
@@ -569,6 +628,94 @@ export function createServer({
   app.get('/api/metrics/cost-timeline', (req: Request, res: Response) => {
     const bucket = parseInt(String(req.query.bucket)) || 60000;
     res.json(metricsStore.getCostTimeline(bucket));
+  });
+
+  // Historical metrics with filters (SQLite-backed)
+  app.get('/api/metrics/history', (req: Request, res: Response) => {
+    try {
+      const filter: import('./types.js').MetricsFilter = {};
+      if (req.query.from) filter.from = parseInt(String(req.query.from));
+      if (req.query.to) filter.to = parseInt(String(req.query.to));
+      if (req.query.model) filter.model = String(req.query.model);
+      if (req.query.session) filter.sessionId = String(req.query.session);
+      if (req.query.tool) filter.toolName = String(req.query.tool);
+      res.json(metricsStore.getSummaryHistorical(filter));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Filter metadata for populating dropdowns
+  app.get('/api/metrics/filters', (_req: Request, res: Response) => {
+    try {
+      res.json({
+        models: [...new Set([...metricsStore.getDistinctModels(), ...tokenStore.getDistinctModels()])].sort(),
+        sessions: tokenStore.getDistinctSessions(),
+        tools: metricsStore.getDistinctTools(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Data export
+  app.get('/api/export/tokens', (req: Request, res: Response) => {
+    try {
+      const format = String(req.query.format || 'json');
+      const { from, to, model, session } = req.query as {
+        from?: string;
+        to?: string;
+        model?: string;
+        session?: string;
+      };
+      const usage = getTokenUsage(provider, tokenStore, {
+        from: from || null,
+        to: to || null,
+        model: model || null,
+        sessionId: session || null,
+      });
+
+      if (format === 'csv') {
+        const rows = usage.sessions.map((s) => ({
+          sessionId: s.sessionId,
+          cwd: s.cwd,
+          startedAt: s.startedAt,
+          lastActivity: s.lastActivity,
+          input: s.input,
+          output: s.output,
+          cacheRead: s.cacheRead,
+          cacheCreate: s.cacheCreate,
+          cost: s.cost.toFixed(6),
+          messageCount: s.messageCount,
+          models: s.models.join(';'),
+        }));
+        const columns = [
+          'sessionId',
+          'cwd',
+          'startedAt',
+          'lastActivity',
+          'input',
+          'output',
+          'cacheRead',
+          'cacheCreate',
+          'cost',
+          'messageCount',
+          'models',
+        ];
+        const header = columns.join(',');
+        const body = rows
+          .map((r) => columns.map((c) => JSON.stringify(String((r as any)[c] ?? ''))).join(','))
+          .join('\n');
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=tokens-${Date.now()}.csv`);
+        res.send(header + '\n' + body);
+      } else {
+        res.setHeader('Content-Disposition', `attachment; filename=tokens-${Date.now()}.json`);
+        res.json(usage);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // JSONL watcher for streaming assistant responses

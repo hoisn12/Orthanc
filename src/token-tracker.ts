@@ -36,9 +36,14 @@ interface TokenUsageResult {
 export function getTokenUsage(
   provider: Provider,
   tokenStore: TokenStore,
-  { from, to }: { from?: string | null; to?: string | null } = {},
+  {
+    from,
+    to,
+    model,
+    sessionId,
+  }: { from?: string | null; to?: string | null; model?: string | null; sessionId?: string | null } = {},
 ): TokenUsageResult {
-  const data = tokenStore.queryAggregated({ from, to });
+  const data = tokenStore.queryAggregated({ from, to, model, sessionId });
 
   if (data.messageCount === 0) return emptyResult();
 

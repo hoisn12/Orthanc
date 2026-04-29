@@ -2509,3 +2509,220 @@ body {
   color: #f44336;
   border: 1px solid rgba(244, 67, 54, 0.3);
 }
+
+/* ── Trace View ──────────────────────────────────────────── */
+.trace-card {
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-card);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.trace-card:hover {
+  background: var(--bg-hover);
+}
+.trace-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.trace-card-stats {
+  margin-left: auto;
+}
+.trace-card-prompt {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trace-back-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.trace-back-btn:hover {
+  background: var(--bg-hover);
+}
+.trace-detail-header {
+  margin-bottom: 12px;
+}
+.trace-detail-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 6px 0 2px;
+  word-break: break-word;
+}
+.trace-detail-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.trace-waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trace-span-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+.trace-depth-0 {
+  padding-left: 0;
+}
+.trace-depth-1 {
+  padding-left: 16px;
+}
+.trace-depth-2 {
+  padding-left: 32px;
+}
+.trace-depth-3 {
+  padding-left: 48px;
+}
+.trace-depth-4 {
+  padding-left: 64px;
+}
+.trace-span-label {
+  min-width: 200px;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.trace-span-type {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  margin-right: 4px;
+}
+.span-tool {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--green);
+}
+.span-subagent {
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--teal);
+}
+.span-api {
+  background: rgba(96, 165, 250, 0.15);
+  color: var(--blue);
+}
+.span-error {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+}
+.span-assistant {
+  background: rgba(129, 140, 248, 0.15);
+  color: var(--accent);
+}
+.span-default {
+  background: rgba(107, 114, 128, 0.15);
+  color: var(--text-muted);
+}
+.trace-span-track {
+  flex: 1;
+  height: 14px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.trace-span-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  min-width: 2px;
+}
+.trace-span-bar.span-tool {
+  background: var(--green);
+  opacity: 0.6;
+}
+.trace-span-bar.span-subagent {
+  background: var(--teal);
+  opacity: 0.6;
+}
+.trace-span-bar.span-api {
+  background: var(--blue);
+  opacity: 0.6;
+}
+.trace-span-bar.span-error {
+  background: var(--red);
+  opacity: 0.6;
+}
+.trace-span-bar.span-assistant {
+  background: var(--accent);
+  opacity: 0.6;
+}
+.trace-span-bar.span-default {
+  background: var(--text-muted);
+  opacity: 0.4;
+}
+
+/* ── Filter Dropdowns ────────────────────────────────────── */
+.filter-dropdowns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.filter-select {
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  max-width: 160px;
+}
+.filter-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.filter-clear-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--red);
+  cursor: pointer;
+}
+.filter-clear-btn:hover {
+  background: rgba(248, 113, 113, 0.1);
+}
+.export-buttons {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.export-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.export-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
