@@ -31,7 +31,24 @@ const state = {
   cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
   projectSetup: getDefaultProjectSetupState(),
+  analyticsData: null,
+  analyticsCharts: {},
 };
+
+// Chart.js dark theme defaults
+if (typeof Chart !== 'undefined') {
+  Chart.defaults.color = '#9ca3af';
+  Chart.defaults.borderColor = '#2d3040';
+  Chart.defaults.font.size = 11;
+  Chart.defaults.plugins.legend.labels.usePointStyle = true;
+  Chart.defaults.plugins.tooltip.backgroundColor = '#21242f';
+  Chart.defaults.plugins.tooltip.titleColor = '#e4e6eb';
+  Chart.defaults.plugins.tooltip.bodyColor = '#9ca3af';
+  Chart.defaults.plugins.tooltip.borderColor = '#2d3040';
+  Chart.defaults.plugins.tooltip.borderWidth = 1;
+  Chart.defaults.plugins.tooltip.padding = 8;
+  Chart.defaults.plugins.tooltip.cornerRadius = 4;
+}
 
 // --- Project switch ---
 
@@ -2112,6 +2129,7 @@ function shortenPath(p) {
 // ============================================================
 
 function navigateTo(pageName) {
+  if (pageName !== 'analytics') destroyAnalyticsCharts();
   document.querySelectorAll('.page').forEach((p) => p.classList.remove('active'));
   document.querySelectorAll('.snb-item').forEach((n) => n.classList.remove('active'));
   const page = document.getElementById(`page-${pageName}`);
@@ -2119,9 +2137,8 @@ function navigateTo(pageName) {
   if (page) page.classList.add('active');
   if (nav) nav.classList.add('active');
 
-  if (pageName === 'settings') {
-    renderSettings();
-  }
+  if (pageName === 'settings') renderSettings();
+  if (pageName === 'analytics') fetchAnalyticsData();
 }
 
 // ============================================================
@@ -2139,6 +2156,277 @@ async function fetchProvider() {
 
 function isCodex() {
   return state.provider?.name === 'codex';
+}
+
+// ============================================================
+// Analytics
+// ============================================================
+
+const CHART_COLORS = ['#818cf8', '#34d399', '#60a5fa', '#fbbf24', '#fb923c', '#f87171', '#2dd4bf', '#a78bfa'];
+
+async function fetchAnalyticsData() {
+  try {
+    const tokenParams = new URLSearchParams();
+    const metricsParams = new URLSearchParams();
+    const { from, to, model, session } = state.tokenFilter;
+    if (from) {
+      tokenParams.set('from', from);
+      metricsParams.set('from', String(new Date(from).getTime()));
+    }
+    if (to) {
+      tokenParams.set('to', to);
+      metricsParams.set('to', String(new Date(to).getTime()));
+    }
+    if (model) {
+      tokenParams.set('model', model);
+      metricsParams.set('model', model);
+    }
+    if (session) {
+      tokenParams.set('session', session);
+      metricsParams.set('session', session);
+    }
+
+    const [tokensRes, metricsRes] = await Promise.all([
+      fetch('/api/tokens' + (tokenParams.toString() ? '?' + tokenParams : '')),
+      fetch('/api/metrics/history' + (metricsParams.toString() ? '?' + metricsParams : '')),
+    ]);
+    state.analyticsData = { tokens: await tokensRes.json(), metrics: await metricsRes.json() };
+    renderAnalytics();
+  } catch {
+    state.analyticsData = null;
+  }
+}
+
+function destroyAnalyticsCharts() {
+  for (const key of Object.keys(state.analyticsCharts)) {
+    state.analyticsCharts[key].destroy();
+  }
+  state.analyticsCharts = {};
+}
+
+function renderAnalytics() {
+  const el = document.getElementById('analyticsPage');
+  if (!el) return;
+  const filterHTML = renderDateFilter();
+  const d = state.analyticsData;
+  if (!d) {
+    el.innerHTML = filterHTML + '<div class="analytics-empty">No analytics data available</div>';
+    return;
+  }
+  el.innerHTML =
+    filterHTML +
+    `<div class="analytics-grid">
+    <div class="analytics-card"><div class="analytics-card-title">Cost Trend</div><canvas id="chart-cost"></canvas></div>
+    <div class="analytics-card"><div class="analytics-card-title">Token Usage Over Time</div><canvas id="chart-tokens"></canvas></div>
+    <div class="analytics-card"><div class="analytics-card-title">Model Cost Comparison</div><canvas id="chart-models"></canvas></div>
+    <div class="analytics-card"><div class="analytics-card-title">Tool Usage Distribution</div><canvas id="chart-tools"></canvas></div>
+    <div class="analytics-card"><div class="analytics-card-title">API Latency</div><canvas id="chart-latency"></canvas></div>
+    <div class="analytics-card"><div class="analytics-card-title">Error Rate</div><canvas id="chart-errors"></canvas></div>
+  </div>`;
+  destroyAnalyticsCharts();
+  createCostChart(d);
+  createTokenChart(d);
+  createModelChart(d);
+  createToolChart(d);
+  createLatencyChart(d);
+  createErrorChart(d);
+}
+
+function chartEmpty(id, msg) {
+  const c = document.getElementById(id);
+  if (!c) return true;
+  if (!msg) return false;
+  c.parentElement.innerHTML = `<div class="analytics-card-title">${c.parentElement.querySelector('.analytics-card-title')?.textContent || ''}</div><div class="analytics-empty">${msg}</div>`;
+  return true;
+}
+
+function createCostChart(d) {
+  const timeline = d.metrics?.costTimeline || [];
+  if (timeline.length === 0) {
+    chartEmpty('chart-cost', 'No cost data');
+    return;
+  }
+  const labels = timeline.map((b) =>
+    new Date(b.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+  );
+  state.analyticsCharts['cost'] = new Chart(document.getElementById('chart-cost'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Cost ($)',
+          data: timeline.map((b) => b.cost),
+          borderColor: '#34d399',
+          backgroundColor: 'rgba(52,211,153,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#2d3040' } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+      },
+    },
+  });
+}
+
+function createTokenChart(d) {
+  const hourly = d.tokens?.hourly || {};
+  const keys = Object.keys(hourly).sort();
+  if (keys.length === 0) {
+    chartEmpty('chart-tokens', 'No token data');
+    return;
+  }
+  const labels = keys.map((k) => k.slice(11) || k.slice(5));
+  state.analyticsCharts['tokens'] = new Chart(document.getElementById('chart-tokens'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Input',
+          data: keys.map((k) => hourly[k].input),
+          borderColor: '#60a5fa',
+          backgroundColor: 'rgba(96,165,250,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 1,
+        },
+        {
+          label: 'Output',
+          data: keys.map((k) => hourly[k].output),
+          borderColor: '#34d399',
+          backgroundColor: 'rgba(52,211,153,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#2d3040' } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+      },
+    },
+  });
+}
+
+function createModelChart(d) {
+  const byModel = d.tokens?.byModel || {};
+  const entries = Object.entries(byModel);
+  if (entries.length === 0) {
+    chartEmpty('chart-models', 'No model data');
+    return;
+  }
+  const labels = entries.map(([m]) => m);
+  const costs = entries.map(([, v]) => v.cost || 0);
+  state.analyticsCharts['models'] = new Chart(document.getElementById('chart-models'), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: costs, backgroundColor: CHART_COLORS.slice(0, labels.length), borderWidth: 0 }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right' },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.label}: $${ctx.parsed.toFixed(4)}` } },
+      },
+    },
+  });
+}
+
+function createToolChart(d) {
+  const toolStats = d.metrics?.toolStats || {};
+  const entries = Object.entries(toolStats)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 10);
+  if (entries.length === 0) {
+    chartEmpty('chart-tools', 'No tool data');
+    return;
+  }
+  state.analyticsCharts['tools'] = new Chart(document.getElementById('chart-tools'), {
+    type: 'bar',
+    data: {
+      labels: entries.map(([n]) => n),
+      datasets: [
+        { label: 'Calls', data: entries.map(([, v]) => v.count), backgroundColor: '#818cf8', borderRadius: 3 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, grid: { color: '#2d3040' } }, y: { grid: { display: false } } },
+    },
+  });
+}
+
+function createLatencyChart(d) {
+  const lat = d.metrics?.latency;
+  if (!lat || lat.count === 0) {
+    chartEmpty('chart-latency', 'No latency data');
+    return;
+  }
+  state.analyticsCharts['latency'] = new Chart(document.getElementById('chart-latency'), {
+    type: 'bar',
+    data: {
+      labels: ['p50', 'p95', 'p99', 'avg'],
+      datasets: [
+        {
+          label: 'ms',
+          data: [lat.p50, lat.p95, lat.p99, lat.avg],
+          backgroundColor: ['#60a5fa', '#fbbf24', '#f87171', '#818cf8'],
+          borderRadius: 3,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${ctx.parsed.y}ms` } },
+      },
+      scales: { y: { beginAtZero: true, grid: { color: '#2d3040' } }, x: { grid: { display: false } } },
+    },
+  });
+}
+
+function createErrorChart(d) {
+  const err = d.metrics?.errorRate;
+  if (!err || err.total === 0) {
+    chartEmpty('chart-errors', 'No errors');
+    return;
+  }
+  const entries = Object.entries(err.byType).sort((a, b) => b[1] - a[1]);
+  state.analyticsCharts['errors'] = new Chart(document.getElementById('chart-errors'), {
+    type: 'bar',
+    data: {
+      labels: entries.map(([t]) => t),
+      datasets: [{ label: 'Count', data: entries.map(([, c]) => c), backgroundColor: '#f87171', borderRadius: 3 }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, grid: { color: '#2d3040' } }, y: { grid: { display: false } } },
+    },
+  });
 }
 
 // ============================================================
@@ -2375,6 +2663,36 @@ async function init() {
     const card = e.target.closest('.trace-card');
     if (card && state.viewMode === 'trace') {
       fetchTraceDetail(card.dataset.traceId);
+    }
+  });
+
+  // Analytics page filter delegation
+  document.getElementById('analyticsPage').addEventListener('click', (e) => {
+    const btn = e.target.closest('.date-preset-btn');
+    if (btn) {
+      applyDatePreset(btn.dataset.preset);
+      fetchAnalyticsData();
+    }
+    const clearBtn = e.target.closest('.filter-clear-btn');
+    if (clearBtn) {
+      state.tokenFilter.model = null;
+      state.tokenFilter.session = null;
+      state.tokenFilter.tool = null;
+      fetchAnalyticsData();
+    }
+  });
+  document.getElementById('analyticsPage').addEventListener('change', (e) => {
+    if (e.target.classList.contains('date-filter-input')) {
+      state.tokenFilter.preset = 'custom';
+      const fromInput = document.querySelector('#analyticsPage .date-filter-input[data-field="from"]');
+      const toInput = document.querySelector('#analyticsPage .date-filter-input[data-field="to"]');
+      state.tokenFilter.from = fromInput?.value ? fromInput.value + 'T00:00:00.000Z' : null;
+      state.tokenFilter.to = toInput?.value ? toInput.value + 'T23:59:59.999Z' : null;
+      fetchAnalyticsData();
+    }
+    if (e.target.classList.contains('filter-select')) {
+      state.tokenFilter[e.target.dataset.filter] = e.target.value || null;
+      fetchAnalyticsData();
     }
   });
 }

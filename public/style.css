@@ -2726,3 +2726,42 @@ body {
   color: var(--text-primary);
   border-color: var(--accent);
 }
+
+/* ── Analytics Page ──────────────────────────────────────── */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 12px;
+}
+.analytics-card {
+  background: var(--bg-card);
+  border-radius: 6px;
+  padding: 14px 16px;
+  min-height: 240px;
+}
+.analytics-card canvas {
+  width: 100% !important;
+  height: 200px !important;
+}
+.analytics-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+.analytics-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}

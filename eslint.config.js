@@ -26,6 +26,7 @@ export default tseslint.config(
       globals: {
         ...globals.browser,
         marked: 'readonly',
+        Chart: 'readonly',
       },
     },
   },
