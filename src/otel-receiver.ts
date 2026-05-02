@@ -6,6 +6,7 @@
 
 import type { EventStore } from './event-store.js';
 import type { MetricsStore } from './metrics-store.js';
+import type { TraceManager } from './trace-manager.js';
 
 const EVENT_MAP: Record<string, string> = {
   'claude_code.api_request': 'otel-api-request',
@@ -21,10 +22,12 @@ type FlatAttrs = Record<string, unknown>;
 export class OtelReceiver {
   eventStore: EventStore;
   metricsStore: MetricsStore;
+  traceManager: TraceManager | null;
 
-  constructor(eventStore: EventStore, metricsStore: MetricsStore) {
+  constructor(eventStore: EventStore, metricsStore: MetricsStore, traceManager?: TraceManager) {
     this.eventStore = eventStore;
     this.metricsStore = metricsStore;
+    this.traceManager = traceManager || null;
   }
 
   ingestLogs(body: OtelBody | null | undefined): void {
@@ -95,6 +98,11 @@ export class OtelReceiver {
     const timestamp = nanoToMs(record.timeUnixNano);
     const sessionId = (attrs['session.id'] || resourceAttrs['session.id'] || null) as string | null;
 
+    // Assign trace context
+    const trace = this.traceManager
+      ? this.traceManager.assignTrace(internalType, null, sessionId)
+      : { traceId: null, parentId: null };
+
     // Push to EventStore for SSE streaming
     this.eventStore.add({
       type: internalType,
@@ -102,6 +110,8 @@ export class OtelReceiver {
       sessionId,
       pid: null,
       source: 'otel',
+      traceId: trace.traceId,
+      parentId: trace.parentId,
     });
 
     // Push to MetricsStore for aggregation
@@ -115,6 +125,7 @@ export class OtelReceiver {
         cacheCreateTokens: parseInt(String(attrs['cache_creation_input_tokens'] || 0)),
         costUsd: parseFloat(String(attrs['cost_usd'] || attrs['cost'] || 0)),
         timestamp,
+        sessionId: sessionId || undefined,
       });
     } else if (internalType === 'otel-api-error') {
       this.metricsStore.recordApiError({
@@ -122,6 +133,7 @@ export class OtelReceiver {
         errorType: (attrs['error_type'] || attrs['error.type'] || 'unknown') as string,
         statusCode: parseInt(String(attrs['status_code'] || attrs['http.status_code'] || 0)),
         timestamp,
+        sessionId: sessionId || undefined,
       });
     } else if (internalType === 'otel-tool-result') {
       this.metricsStore.recordToolExecution({
@@ -129,6 +141,7 @@ export class OtelReceiver {
         durationMs: parseFloat(String(attrs['duration_ms'] || attrs['duration'] || 0)),
         success: attrs['success'] !== 'false' && attrs['success'] !== false,
         timestamp,
+        sessionId: sessionId || undefined,
       });
     }
   }
@@ -150,6 +163,10 @@ export class OtelReceiver {
     const durationMs = endMs - startMs;
     const sessionId = (attrs['session.id'] || resourceAttrs['session.id'] || null) as string | null;
 
+    const spanTrace = this.traceManager
+      ? this.traceManager.assignTrace('otel-span', null, sessionId)
+      : { traceId: null, parentId: null };
+
     this.eventStore.add({
       type: 'otel-span',
       payload: {
@@ -163,6 +180,8 @@ export class OtelReceiver {
       sessionId,
       pid: null,
       source: 'otel',
+      traceId: spanTrace.traceId,
+      parentId: spanTrace.parentId,
     });
 
     // If this looks like a tool execution span, record it
@@ -172,6 +191,7 @@ export class OtelReceiver {
         durationMs,
         success: span.status?.code !== 2,
         timestamp: startMs,
+        sessionId: sessionId || undefined,
       });
     }
   }

@@ -16,11 +16,15 @@ export function createTestDb(): DbInstance {
       type TEXT NOT NULL,
       session_id TEXT,
       pid INTEGER,
-      payload TEXT
+      payload TEXT,
+      trace_id TEXT,
+      parent_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
     CREATE INDEX IF NOT EXISTS idx_events_pid ON events(pid);
     CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+    CREATE INDEX IF NOT EXISTS idx_events_trace_id ON events(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_events_parent_id ON events(parent_id);
 
     CREATE TABLE IF NOT EXISTS usage (
       session_id TEXT PRIMARY KEY,
@@ -50,6 +54,45 @@ export function createTestDb(): DbInstance {
       byte_offset INTEGER NOT NULL DEFAULT 0,
       last_synced TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS api_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      session_id TEXT,
+      model TEXT NOT NULL,
+      duration_ms REAL NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_api_calls_model ON api_calls(model);
+    CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session_id);
+
+    CREATE TABLE IF NOT EXISTS tool_executions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      session_id TEXT,
+      tool_name TEXT NOT NULL,
+      duration_ms REAL NOT NULL,
+      success INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_execs_timestamp ON tool_executions(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_tool_execs_tool ON tool_executions(tool_name);
+    CREATE INDEX IF NOT EXISTS idx_tool_execs_session ON tool_executions(session_id);
+
+    CREATE TABLE IF NOT EXISTS api_errors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      session_id TEXT,
+      model TEXT NOT NULL,
+      error_type TEXT NOT NULL,
+      status_code INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_errors_timestamp ON api_errors(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_api_errors_session ON api_errors(session_id);
   `);
 
   return db;

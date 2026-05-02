@@ -11,6 +11,13 @@ interface EventRow {
   session_id: string | null;
   pid: number | null;
   payload: string;
+  trace_id: string | null;
+  parent_id: string | null;
+}
+
+interface TraceRootRow extends EventRow {
+  child_count: number;
+  last_activity: string;
 }
 
 export class EventStore {
@@ -26,6 +33,9 @@ export class EventStore {
   private _stmtBySessionAndType: Database.Statement;
   private _stmtOlder: Database.Statement;
   private _stmtOlderByPid: Database.Statement;
+  private _stmtTraceRoots: Database.Statement;
+  private _stmtTraceRootsByPid: Database.Statement;
+  private _stmtByTraceId: Database.Statement;
 
   constructor(maxSize = 2000, { db }: { db?: DbInstance } = {}) {
     this.maxSize = maxSize;
@@ -33,7 +43,7 @@ export class EventStore {
     this.db = db || getDb();
 
     this._stmtInsert = this.db.prepare(
-      'INSERT INTO events (id, timestamp, type, session_id, pid, payload) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (id, timestamp, type, session_id, pid, payload, trace_id, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     );
     this._stmtRecent = this.db.prepare('SELECT * FROM events ORDER BY timestamp DESC LIMIT ?');
     this._stmtRecentByPid = this.db.prepare('SELECT * FROM events WHERE pid = ? ORDER BY timestamp DESC LIMIT ?');
@@ -48,6 +58,23 @@ export class EventStore {
     this._stmtOlderByPid = this.db.prepare(
       'SELECT * FROM events WHERE timestamp < ? AND pid = ? ORDER BY timestamp DESC LIMIT ?',
     );
+    this._stmtTraceRoots = this.db.prepare(`
+      SELECT e.*,
+        (SELECT COUNT(*) FROM events c WHERE c.trace_id = e.trace_id) as child_count,
+        (SELECT MAX(c.timestamp) FROM events c WHERE c.trace_id = e.trace_id) as last_activity
+      FROM events e
+      WHERE e.type = 'user-prompt-submit' AND e.trace_id IS NOT NULL
+      ORDER BY e.timestamp DESC LIMIT ?
+    `);
+    this._stmtTraceRootsByPid = this.db.prepare(`
+      SELECT e.*,
+        (SELECT COUNT(*) FROM events c WHERE c.trace_id = e.trace_id) as child_count,
+        (SELECT MAX(c.timestamp) FROM events c WHERE c.trace_id = e.trace_id) as last_activity
+      FROM events e
+      WHERE e.type = 'user-prompt-submit' AND e.trace_id IS NOT NULL AND e.pid = ?
+      ORDER BY e.timestamp DESC LIMIT ?
+    `);
+    this._stmtByTraceId = this.db.prepare('SELECT * FROM events WHERE trace_id = ? ORDER BY timestamp ASC');
   }
 
   add(event: EventInput): EventEntry {
@@ -58,6 +85,8 @@ export class EventStore {
       sessionId: event.sessionId || null,
       pid: event.pid || null,
       payload: event.payload || {},
+      traceId: event.traceId || null,
+      parentId: event.parentId || null,
     };
 
     this._stmtInsert.run(
@@ -67,6 +96,8 @@ export class EventStore {
       entry.sessionId,
       entry.pid,
       JSON.stringify(entry.payload),
+      entry.traceId,
+      entry.parentId,
     );
 
     // Prune old events
@@ -106,6 +137,28 @@ export class EventStore {
     return rows.map(rowToEvent);
   }
 
+  listTraceRoots(
+    limit = 50,
+    filter: { pid?: number } = {},
+  ): (EventEntry & { childCount: number; lastActivity: string })[] {
+    let rows: TraceRootRow[];
+    if (filter.pid) {
+      rows = this._stmtTraceRootsByPid.all(filter.pid, limit) as TraceRootRow[];
+    } else {
+      rows = this._stmtTraceRoots.all(limit) as TraceRootRow[];
+    }
+    return rows.map((row) => ({
+      ...rowToEvent(row),
+      childCount: row.child_count,
+      lastActivity: row.last_activity,
+    }));
+  }
+
+  getByTraceId(traceId: string): EventEntry[] {
+    const rows = this._stmtByTraceId.all(traceId) as EventRow[];
+    return rows.map(rowToEvent);
+  }
+
   subscribe(listener: EventListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -122,5 +175,7 @@ function rowToEvent(row: EventRow): EventEntry {
     sessionId: row.session_id,
     pid: row.pid,
     payload: JSON.parse(row.payload || '{}') as Record<string, unknown>,
+    traceId: row.trace_id || null,
+    parentId: row.parent_id || null,
   };
 }

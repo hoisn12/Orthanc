@@ -59,6 +59,8 @@ export interface EventInput {
   sessionId?: string | null;
   pid?: number | null;
   source?: string;
+  traceId?: string | null;
+  parentId?: string | null;
 }
 
 export interface EventEntry {
@@ -68,6 +70,8 @@ export interface EventEntry {
   sessionId: string | null;
   pid: number | null;
   payload: Record<string, unknown>;
+  traceId: string | null;
+  parentId: string | null;
 }
 
 // ── Hooks / Config ──────────────────────────────────────────
@@ -122,6 +126,7 @@ export interface ApiCallRecord {
   cacheCreateTokens: number;
   costUsd: number;
   timestamp: number;
+  sessionId?: string;
 }
 
 export interface ToolExecutionRecord {
@@ -129,6 +134,7 @@ export interface ToolExecutionRecord {
   durationMs: number;
   success: boolean;
   timestamp: number;
+  sessionId?: string;
 }
 
 export interface ApiErrorRecord {
@@ -136,6 +142,15 @@ export interface ApiErrorRecord {
   errorType: string;
   statusCode: number;
   timestamp: number;
+  sessionId?: string;
+}
+
+export interface MetricsFilter {
+  from?: number;
+  to?: number;
+  model?: string;
+  sessionId?: string;
+  toolName?: string;
 }
 
 export interface LatencyStats {

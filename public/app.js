@@ -23,7 +23,11 @@ const state = {
   currentTool: null, // { toolName, detail, pid, timestamp } — currently running tool
   loadingOlder: false,
   noMoreEvents: false,
-  tokenFilter: { preset: 'all', from: null, to: null },
+  viewMode: 'flat', // 'flat' | 'trace'
+  traces: [], // trace roots from /api/traces
+  activeTrace: null, // currently expanded trace (tree)
+  tokenFilter: { preset: 'all', from: null, to: null, model: null, session: null },
+  filterOptions: { models: [], sessions: [], tools: [] },
   cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
   projectSetup: getDefaultProjectSetupState(),
@@ -1591,9 +1595,11 @@ const HOOK_EVENTS_COUNT = 12;
 async function fetchTokenUsage() {
   try {
     const params = new URLSearchParams();
-    const { from, to } = state.tokenFilter;
+    const { from, to, model, session } = state.tokenFilter;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
+    if (model) params.set('model', model);
+    if (session) params.set('session', session);
     const qs = params.toString();
     const [res, healthRes] = await Promise.all([
       fetch('/api/tokens' + (qs ? '?' + qs : '')),
@@ -1606,6 +1612,15 @@ async function fetchTokenUsage() {
     renderSessions();
   } catch {
     state.tokens = null;
+  }
+}
+
+async function fetchFilterOptions() {
+  try {
+    const res = await fetch('/api/metrics/filters');
+    state.filterOptions = await res.json();
+  } catch {
+    state.filterOptions = { models: [], sessions: [], tools: [] };
   }
 }
 
@@ -1658,7 +1673,32 @@ function renderDateFilter() {
     </div>`
       : '';
 
-  return `<div class="date-filter-bar">${buttons}${customInputs}</div>`;
+  const { model, session } = state.tokenFilter;
+  const opts = state.filterOptions || { models: [], sessions: [], tools: [] };
+  const hasActiveFilter = model || session;
+
+  const modelOpts = opts.models
+    .map((m) => `<option value="${escapeHtml(m)}" ${model === m ? 'selected' : ''}>${escapeHtml(m)}</option>`)
+    .join('');
+  const sessionOpts = (opts.sessions || [])
+    .map((s) => {
+      const id = typeof s === 'string' ? s : s.sessionId;
+      const label = typeof s === 'string' ? s.slice(0, 12) : s.cwd ? s.cwd.split('/').pop() : s.sessionId.slice(0, 12);
+      return `<option value="${escapeHtml(id)}" ${session === id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  const filterDropdowns = `<div class="filter-dropdowns">
+    <select class="filter-select" data-filter="model"><option value="">All Models</option>${modelOpts}</select>
+    <select class="filter-select" data-filter="session"><option value="">All Sessions</option>${sessionOpts}</select>
+    ${hasActiveFilter ? '<button class="filter-clear-btn">Clear</button>' : ''}
+  </div>`;
+
+  const exportBtns = `<div class="export-buttons">
+    <button class="export-btn" data-format="csv" title="Export CSV">CSV</button>
+    <button class="export-btn" data-format="json" title="Export JSON">JSON</button>
+  </div>`;
+
+  return `<div class="date-filter-bar">${buttons}${customInputs}</div>${filterDropdowns}${exportBtns}`;
 }
 
 function applyDatePreset(preset) {
@@ -2096,6 +2136,131 @@ function isCodex() {
   return state.provider?.name === 'codex';
 }
 
+// ============================================================
+// Trace View
+// ============================================================
+
+async function fetchTraces() {
+  try {
+    const params = new URLSearchParams();
+    params.set('limit', '50');
+    if (state.filterPid) params.set('pid', state.filterPid);
+    const res = await fetch('/api/traces?' + params.toString());
+    state.traces = await res.json();
+    renderTraceList();
+  } catch {
+    state.traces = [];
+  }
+}
+
+async function fetchTraceDetail(traceId) {
+  try {
+    const res = await fetch('/api/traces/' + encodeURIComponent(traceId));
+    state.activeTrace = await res.json();
+    renderTraceDetail();
+  } catch {
+    state.activeTrace = null;
+  }
+}
+
+function renderTraceList() {
+  const el = document.getElementById('feed');
+  if (!state.traces || state.traces.length === 0) {
+    el.innerHTML = '<div class="feed-empty">No traces yet</div>';
+    return;
+  }
+  const items = state.traces.map((t) => {
+    const prompt = (t.payload && (t.payload.content || t.payload.prompt || t.payload.message)) || '';
+    const preview = typeof prompt === 'string' ? escapeHtml(prompt.slice(0, 120)) : '';
+    const duration = t.lastActivity
+      ? formatDuration(new Date(t.lastActivity).getTime() - new Date(t.timestamp).getTime())
+      : '';
+    const ago = new Date(t.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="trace-card" data-trace-id="${escapeHtml(t.traceId)}">
+      <div class="trace-card-header">
+        <span class="trace-card-time">${ago}</span>
+        ${t.pid ? `<span class="pid-badge">PID ${t.pid}</span>` : ''}
+        <span class="trace-card-stats">${t.childCount || 0} spans${duration ? ' &middot; ' + duration : ''}</span>
+      </div>
+      <div class="trace-card-prompt">${preview || '<em>No prompt text</em>'}</div>
+    </div>`;
+  });
+  el.innerHTML = items.join('');
+}
+
+function renderTraceDetail() {
+  const el = document.getElementById('feed');
+  const tree = state.activeTrace;
+  if (!tree) {
+    el.innerHTML = '<div class="feed-empty">Trace not found</div>';
+    return;
+  }
+
+  const allNodes = flattenTree(tree);
+  const traceStart = new Date(allNodes[0].timestamp).getTime();
+  const traceEnd = Math.max(...allNodes.map((n) => new Date(n.timestamp).getTime()));
+  const traceDuration = Math.max(traceEnd - traceStart, 1);
+
+  const backBtn = `<button class="trace-back-btn" id="traceBackBtn">&larr; Back to traces</button>`;
+  const prompt = (tree.payload && (tree.payload.content || tree.payload.prompt || tree.payload.message)) || '';
+  const header = `<div class="trace-detail-header">
+    ${backBtn}
+    <div class="trace-detail-title">${escapeHtml(typeof prompt === 'string' ? prompt.slice(0, 200) : '')}</div>
+    <div class="trace-detail-meta">${allNodes.length} events &middot; ${formatDuration(traceDuration)}</div>
+  </div>`;
+
+  const spans = allNodes.map((node) => {
+    const offset = ((new Date(node.timestamp).getTime() - traceStart) / traceDuration) * 100;
+    const dur = node.payload?.durationMs || node.payload?.duration_ms || 0;
+    const width = Math.max((dur / traceDuration) * 100, 0.5);
+    const depth = node._depth || 0;
+    const typeClass = getSpanTypeClass(node.type);
+    const label = getSpanLabel(node);
+    const durText = dur ? ` (${Math.round(dur)}ms)` : '';
+    return `<div class="trace-span-row trace-depth-${Math.min(depth, 4)}">
+      <div class="trace-span-label"><span class="trace-span-type ${typeClass}">${escapeHtml(node.type)}</span> ${escapeHtml(label)}${durText}</div>
+      <div class="trace-span-track">
+        <div class="trace-span-bar ${typeClass}" style="left:${offset.toFixed(1)}%;width:${width.toFixed(1)}%"></div>
+      </div>
+    </div>`;
+  });
+
+  el.innerHTML = header + '<div class="trace-waterfall">' + spans.join('') + '</div>';
+
+  document.getElementById('traceBackBtn')?.addEventListener('click', () => {
+    state.activeTrace = null;
+    fetchTraces();
+  });
+}
+
+function flattenTree(node, depth = 0) {
+  const result = [{ ...node, _depth: depth }];
+  if (node.children) {
+    for (const child of node.children) {
+      result.push(...flattenTree(child, depth + 1));
+    }
+  }
+  return result;
+}
+
+function getSpanTypeClass(type) {
+  if (type.includes('tool')) return 'span-tool';
+  if (type.includes('subagent')) return 'span-subagent';
+  if (type.includes('api') || type.includes('otel-api')) return 'span-api';
+  if (type.includes('error')) return 'span-error';
+  if (type.includes('assistant') || type === 'stop') return 'span-assistant';
+  return 'span-default';
+}
+
+function getSpanLabel(node) {
+  const p = node.payload || {};
+  if (p.tool_name) return String(p.tool_name);
+  if (p.model) return String(p.model);
+  if (p.name) return String(p.name);
+  if (p.content) return String(p.content).slice(0, 60);
+  return '';
+}
+
 async function init() {
   await fetchProjectSetupState();
   await fetchProvider();
@@ -2105,6 +2270,7 @@ async function init() {
   await fetchTokenUsage();
   await fetchMetrics();
   await fetchUsage();
+  await fetchFilterOptions();
   connectSSE();
 
   setInterval(fetchSessions, 5000);
@@ -2136,6 +2302,18 @@ async function init() {
     renderFeed();
   });
 
+  // Trace view toggle
+  document.getElementById('toggleTraceView').addEventListener('click', (e) => {
+    state.viewMode = state.viewMode === 'flat' ? 'trace' : 'flat';
+    e.target.textContent = state.viewMode === 'trace' ? 'Flat view' : 'Trace view';
+    if (state.viewMode === 'trace') {
+      state.activeTrace = null;
+      fetchTraces();
+    } else {
+      renderFeed();
+    }
+  });
+
   // SNB navigation
   document.querySelectorAll('.snb-item').forEach((item) => {
     item.addEventListener('click', (e) => {
@@ -2157,6 +2335,40 @@ async function init() {
       state.tokenFilter.from = fromInput?.value ? fromInput.value + 'T00:00:00.000Z' : null;
       state.tokenFilter.to = toInput?.value ? toInput.value + 'T23:59:59.999Z' : null;
       fetchTokenUsage();
+    }
+    if (e.target.classList.contains('filter-select')) {
+      state.tokenFilter[e.target.dataset.filter] = e.target.value || null;
+      fetchTokenUsage();
+    }
+  });
+
+  // Export buttons
+  document.getElementById('tokenUsage').addEventListener('click', (e) => {
+    const exportBtn = e.target.closest('.export-btn');
+    if (exportBtn) {
+      const format = exportBtn.dataset.format;
+      const params = new URLSearchParams();
+      params.set('format', format);
+      const { from, to, model, session } = state.tokenFilter;
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (model) params.set('model', model);
+      if (session) params.set('session', session);
+      window.open('/api/export/tokens?' + params.toString());
+    }
+    const clearBtn = e.target.closest('.filter-clear-btn');
+    if (clearBtn) {
+      state.tokenFilter.model = null;
+      state.tokenFilter.session = null;
+      fetchTokenUsage();
+    }
+  });
+
+  // Trace card click
+  document.getElementById('feed').addEventListener('click', (e) => {
+    const card = e.target.closest('.trace-card');
+    if (card && state.viewMode === 'trace') {
+      fetchTraceDetail(card.dataset.traceId);
     }
   });
 }
