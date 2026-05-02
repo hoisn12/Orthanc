@@ -245,6 +245,93 @@ describe('MetricsStore (SQLite persistence)', () => {
     assert.equal(tools['Read']!.count, 1);
   });
 
+  it('ignores model filters for tool execution historical queries', () => {
+    const db = createTestDb();
+    const store = new MetricsStore(3600000, { db });
+
+    store.recordToolExecution({
+      toolName: 'Bash',
+      durationMs: 100,
+      success: true,
+      timestamp: Date.now(),
+      sessionId: 'sess-1',
+    });
+
+    const tools = store.getToolStatsHistorical({ model: 'sonnet' });
+    assert.ok(tools['Bash']);
+    assert.equal(tools['Bash']!.count, 1);
+  });
+
+  it('applies model filters to model-backed historical queries', () => {
+    const db = createTestDb();
+    const store = new MetricsStore(3600000, { db });
+
+    store.recordApiCall({
+      model: 'sonnet',
+      durationMs: 100,
+      inputTokens: 500,
+      outputTokens: 200,
+      costUsd: 0.01,
+      timestamp: Date.now(),
+    });
+    store.recordApiCall({
+      model: 'opus',
+      durationMs: 300,
+      inputTokens: 1000,
+      outputTokens: 500,
+      costUsd: 0.05,
+      timestamp: Date.now(),
+    });
+
+    const stats = store.getApiLatencyStatsHistorical({ model: 'sonnet' });
+    assert.equal(stats.count, 1);
+    assert.equal(stats.p50, 100);
+  });
+
+  it('uses zero-based nearest-rank offsets for historical API percentiles', () => {
+    const db = createTestDb();
+    const store = new MetricsStore(3600000, { db });
+
+    store.recordApiCall({
+      model: 'sonnet',
+      durationMs: 100,
+      inputTokens: 500,
+      outputTokens: 200,
+      costUsd: 0.01,
+      timestamp: Date.now(),
+    });
+    store.recordApiCall({
+      model: 'sonnet',
+      durationMs: 300,
+      inputTokens: 1000,
+      outputTokens: 500,
+      costUsd: 0.05,
+      timestamp: Date.now(),
+    });
+
+    const stats = store.getApiLatencyStatsHistorical({});
+    assert.equal(stats.p50, 100);
+    assert.equal(stats.p95, 300);
+    assert.equal(stats.p99, 300);
+  });
+
+  it('uses zero-based nearest-rank offsets for historical tool p95', () => {
+    const db = createTestDb();
+    const store = new MetricsStore(3600000, { db });
+
+    for (let i = 1; i <= 20; i++) {
+      store.recordToolExecution({
+        toolName: 'Bash',
+        durationMs: i * 10,
+        success: true,
+        timestamp: Date.now(),
+      });
+    }
+
+    const tools = store.getToolStatsHistorical({});
+    assert.equal(tools['Bash']!.p95, 190);
+  });
+
   it('persists api errors and queries historically', () => {
     const db = createTestDb();
     const store = new MetricsStore(3600000, { db });

@@ -26,7 +26,7 @@ const state = {
   viewMode: 'flat', // 'flat' | 'trace'
   traces: [], // trace roots from /api/traces
   activeTrace: null, // currently expanded trace (tree)
-  tokenFilter: { preset: 'all', from: null, to: null, model: null, session: null, tool: null },
+  tokenFilter: { preset: 'all', from: null, to: null, model: null, session: null },
   filterOptions: { models: [], sessions: [], tools: [] },
   cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
@@ -1612,7 +1612,7 @@ const HOOK_EVENTS_COUNT = 12;
 async function fetchTokenUsage() {
   try {
     const params = new URLSearchParams();
-    const { from, to, model, session, tool } = state.tokenFilter;
+    const { from, to, model, session } = state.tokenFilter;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     if (model) params.set('model', model);
@@ -1690,9 +1690,9 @@ function renderDateFilter() {
     </div>`
       : '';
 
-  const { model, session, tool } = state.tokenFilter;
+  const { model, session } = state.tokenFilter;
   const opts = state.filterOptions || { models: [], sessions: [], tools: [] };
-  const hasActiveFilter = model || session || tool;
+  const hasActiveFilter = model || session;
 
   const modelOpts = opts.models
     .map((m) => `<option value="${escapeHtml(m)}" ${model === m ? 'selected' : ''}>${escapeHtml(m)}</option>`)
@@ -1704,14 +1704,9 @@ function renderDateFilter() {
       return `<option value="${escapeHtml(id)}" ${session === id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
     })
     .join('');
-  const toolOpts = opts.tools
-    .map((t) => `<option value="${escapeHtml(t)}" ${tool === t ? 'selected' : ''}>${escapeHtml(t)}</option>`)
-    .join('');
-
   const filterDropdowns = `<div class="filter-dropdowns">
     <select class="filter-select" data-filter="model"><option value="">All Models</option>${modelOpts}</select>
     <select class="filter-select" data-filter="session"><option value="">All Sessions</option>${sessionOpts}</select>
-    <select class="filter-select" data-filter="tool"><option value="">All Tools</option>${toolOpts}</select>
     ${hasActiveFilter ? '<button class="filter-clear-btn">Clear</button>' : ''}
   </div>`;
 
@@ -2249,7 +2244,7 @@ function createCostChart(d) {
   const labels = timeline.map((b) =>
     new Date(b.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
   );
-  state.analyticsCharts['cost'] = new Chart(document.getElementById('chart-cost'), {
+  state.analyticsCharts.cost = new Chart(document.getElementById('chart-cost'), {
     type: 'line',
     data: {
       labels,
@@ -2285,7 +2280,7 @@ function createTokenChart(d) {
     return;
   }
   const labels = keys.map((k) => k.slice(11) || k.slice(5));
-  state.analyticsCharts['tokens'] = new Chart(document.getElementById('chart-tokens'), {
+  state.analyticsCharts.tokens = new Chart(document.getElementById('chart-tokens'), {
     type: 'line',
     data: {
       labels,
@@ -2331,7 +2326,7 @@ function createModelChart(d) {
   }
   const labels = entries.map(([m]) => m);
   const costs = entries.map(([, v]) => v.cost || 0);
-  state.analyticsCharts['models'] = new Chart(document.getElementById('chart-models'), {
+  state.analyticsCharts.models = new Chart(document.getElementById('chart-models'), {
     type: 'doughnut',
     data: {
       labels,
@@ -2357,7 +2352,7 @@ function createToolChart(d) {
     chartEmpty('chart-tools', 'No tool data');
     return;
   }
-  state.analyticsCharts['tools'] = new Chart(document.getElementById('chart-tools'), {
+  state.analyticsCharts.tools = new Chart(document.getElementById('chart-tools'), {
     type: 'bar',
     data: {
       labels: entries.map(([n]) => n),
@@ -2381,7 +2376,7 @@ function createLatencyChart(d) {
     chartEmpty('chart-latency', 'No latency data');
     return;
   }
-  state.analyticsCharts['latency'] = new Chart(document.getElementById('chart-latency'), {
+  state.analyticsCharts.latency = new Chart(document.getElementById('chart-latency'), {
     type: 'bar',
     data: {
       labels: ['p50', 'p95', 'p99', 'avg'],
@@ -2413,7 +2408,7 @@ function createErrorChart(d) {
     return;
   }
   const entries = Object.entries(err.byType).sort((a, b) => b[1] - a[1]);
-  state.analyticsCharts['errors'] = new Chart(document.getElementById('chart-errors'), {
+  state.analyticsCharts.errors = new Chart(document.getElementById('chart-errors'), {
     type: 'bar',
     data: {
       labels: entries.map(([t]) => t),
@@ -2653,7 +2648,6 @@ async function init() {
     if (clearBtn) {
       state.tokenFilter.model = null;
       state.tokenFilter.session = null;
-      state.tokenFilter.tool = null;
       fetchTokenUsage();
     }
   });
@@ -2677,7 +2671,6 @@ async function init() {
     if (clearBtn) {
       state.tokenFilter.model = null;
       state.tokenFilter.session = null;
-      state.tokenFilter.tool = null;
       fetchAnalyticsData();
     }
   });

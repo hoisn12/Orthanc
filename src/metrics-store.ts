@@ -233,13 +233,13 @@ export class MetricsStore {
     };
     const p50 = this.db
       .prepare(`SELECT duration_ms FROM api_calls ${where} ORDER BY duration_ms ASC LIMIT 1 OFFSET ?`)
-      .get(...params, Math.floor(countRow.cnt * 0.5)) as { duration_ms: number } | undefined;
+      .get(...params, percentileOffset(countRow.cnt, 0.5)) as { duration_ms: number } | undefined;
     const p95 = this.db
       .prepare(`SELECT duration_ms FROM api_calls ${where} ORDER BY duration_ms ASC LIMIT 1 OFFSET ?`)
-      .get(...params, Math.floor(countRow.cnt * 0.95)) as { duration_ms: number } | undefined;
+      .get(...params, percentileOffset(countRow.cnt, 0.95)) as { duration_ms: number } | undefined;
     const p99 = this.db
       .prepare(`SELECT duration_ms FROM api_calls ${where} ORDER BY duration_ms ASC LIMIT 1 OFFSET ?`)
-      .get(...params, Math.floor(countRow.cnt * 0.99)) as { duration_ms: number } | undefined;
+      .get(...params, percentileOffset(countRow.cnt, 0.99)) as { duration_ms: number } | undefined;
 
     return {
       p50: p50?.duration_ms || 0,
@@ -279,7 +279,7 @@ export class MetricsStore {
         .prepare(
           `SELECT duration_ms FROM tool_executions ${where ? where + ' AND' : 'WHERE'} tool_name = ? ORDER BY duration_ms ASC LIMIT 1 OFFSET ?`,
         )
-        .get(...params, r.tool_name, Math.floor(r.cnt * 0.95)) as { duration_ms: number } | undefined;
+        .get(...params, r.tool_name, percentileOffset(r.cnt, 0.95)) as { duration_ms: number } | undefined;
 
       result[r.tool_name] = {
         count: r.cnt,
@@ -392,6 +392,10 @@ function percentile(sorted: number[], p: number): number {
   return sorted[Math.max(0, idx)]!;
 }
 
+function percentileOffset(count: number, p: number): number {
+  return Math.max(0, Math.ceil(p * count) - 1);
+}
+
 function buildMetricsWhere(filter: MetricsFilter, table: string): { where: string; params: (string | number)[] } {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -404,7 +408,7 @@ function buildMetricsWhere(filter: MetricsFilter, table: string): { where: strin
     conditions.push('timestamp < ?');
     params.push(filter.to);
   }
-  if (filter.model) {
+  if (filter.model && table !== 'tool_executions') {
     conditions.push('model = ?');
     params.push(filter.model);
   }
