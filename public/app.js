@@ -26,7 +26,7 @@ const state = {
   viewMode: 'flat', // 'flat' | 'trace'
   traces: [], // trace roots from /api/traces
   activeTrace: null, // currently expanded trace (tree)
-  tokenFilter: { preset: 'all', from: null, to: null, model: null, session: null, tool: null },
+  tokenFilter: { preset: 'all', from: null, to: null, model: null, session: null },
   filterOptions: { models: [], sessions: [], tools: [] },
   cacheHealth: {}, // { [sessionId]: 'healthy'|'degraded'|'broken'|'unknown' }
   sessionConfig: null, // per-session config when a session is selected
@@ -1595,7 +1595,7 @@ const HOOK_EVENTS_COUNT = 12;
 async function fetchTokenUsage() {
   try {
     const params = new URLSearchParams();
-    const { from, to, model, session, tool } = state.tokenFilter;
+    const { from, to, model, session } = state.tokenFilter;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     if (model) params.set('model', model);
@@ -1673,9 +1673,9 @@ function renderDateFilter() {
     </div>`
       : '';
 
-  const { model, session, tool } = state.tokenFilter;
+  const { model, session } = state.tokenFilter;
   const opts = state.filterOptions || { models: [], sessions: [], tools: [] };
-  const hasActiveFilter = model || session || tool;
+  const hasActiveFilter = model || session;
 
   const modelOpts = opts.models
     .map((m) => `<option value="${escapeHtml(m)}" ${model === m ? 'selected' : ''}>${escapeHtml(m)}</option>`)
@@ -1687,14 +1687,9 @@ function renderDateFilter() {
       return `<option value="${escapeHtml(id)}" ${session === id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
     })
     .join('');
-  const toolOpts = opts.tools
-    .map((t) => `<option value="${escapeHtml(t)}" ${tool === t ? 'selected' : ''}>${escapeHtml(t)}</option>`)
-    .join('');
-
   const filterDropdowns = `<div class="filter-dropdowns">
     <select class="filter-select" data-filter="model"><option value="">All Models</option>${modelOpts}</select>
     <select class="filter-select" data-filter="session"><option value="">All Sessions</option>${sessionOpts}</select>
-    <select class="filter-select" data-filter="tool"><option value="">All Tools</option>${toolOpts}</select>
     ${hasActiveFilter ? '<button class="filter-clear-btn">Clear</button>' : ''}
   </div>`;
 
@@ -2365,7 +2360,6 @@ async function init() {
     if (clearBtn) {
       state.tokenFilter.model = null;
       state.tokenFilter.session = null;
-      state.tokenFilter.tool = null;
       fetchTokenUsage();
     }
   });
