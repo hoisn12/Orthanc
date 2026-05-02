@@ -404,7 +404,7 @@ function buildMetricsWhere(filter: MetricsFilter, table: string): { where: strin
     conditions.push('timestamp < ?');
     params.push(filter.to);
   }
-  if (filter.model) {
+  if (filter.model && table !== 'tool_executions') {
     conditions.push('model = ?');
     params.push(filter.model);
   }

@@ -339,6 +339,10 @@ export function createServer({
       parentId,
     });
 
+    if (type === 'user-prompt-submit') {
+      traceManager.setRootEventId(event.id, pid, sessionId);
+    }
+
     // After subagent-start is stored, push its event ID onto the trace span stack
     if (type === 'subagent-start') {
       traceManager.pushSpan(event.id, pid, sessionId);
