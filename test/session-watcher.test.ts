@@ -131,10 +131,37 @@ describe('SessionWatcher no-pid sessions', () => {
     assert.equal(session.pid, -1);
     assert.equal(session.hasRealPid, false);
   });
+
+  it('keeps an already active no-pid session when it is omitted from the provider listing', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orthanc-session-watcher-'));
+    const sessionFile = path.join(root, 'session.jsonl');
+    fs.writeFileSync(sessionFile, '{}\n');
+
+    const provider = new NoPidProvider(root, ['other.jsonl']);
+    const watcher = new SessionWatcher(provider, null);
+    watcher.sessions.set(-1, {
+      pid: -1,
+      sessionId: 'codex-session',
+      sessionFilePath: sessionFile,
+      hasRealPid: false,
+      cwd: '/projects/codex',
+      startedAt: Date.now() - 60 * 60 * 1000,
+      name: 'codex',
+      alive: true,
+      uptime: 0,
+    });
+
+    watcher.poll();
+
+    assert.ok(watcher.getBySessionId('codex-session'));
+  });
 });
 
 class NoPidProvider extends Provider {
-  constructor(private readonly root: string) {
+  constructor(
+    private readonly root: string,
+    private readonly files = ['session.jsonl'],
+  ) {
     super();
   }
 
@@ -151,10 +178,11 @@ class NoPidProvider extends Provider {
   }
 
   listSessionFiles(): string[] {
-    return ['session.jsonl'];
+    return this.files;
   }
 
-  parseSessionFile(filePath: string): SessionData {
+  parseSessionFile(filePath: string): SessionData | null {
+    if (path.basename(filePath) !== 'session.jsonl') return null;
     return {
       pid: -1,
       sessionId: 'codex-session',

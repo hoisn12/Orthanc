@@ -75,7 +75,10 @@ export class SessionWatcher {
 
     // remove dead sessions (file removed or process not alive)
     for (const [pid, session] of this.sessions) {
-      if (!currentPids.has(pid) || (session.hasRealPid !== false && !isProcessAlive(pid))) {
+      if (session.hasRealPid === false) {
+        if (session.sessionFilePath && fs.existsSync(session.sessionFilePath)) continue;
+        this.sessions.delete(pid);
+      } else if (!currentPids.has(pid) || !isProcessAlive(pid)) {
         this.sessions.delete(pid);
       }
     }
