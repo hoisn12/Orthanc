@@ -1,8 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { SessionWatcher } from '../src/session-watcher.js';
 import { ClaudeProvider } from '../src/providers/claude-provider.js';
-import type { SessionInfo } from '../src/types.js';
+import { Provider } from '../src/providers/provider.js';
+import type { SessionData, SessionInfo } from '../src/types.js';
 
 /**
  * SessionWatcher depends on live processes and filesystem,
@@ -97,3 +101,104 @@ describe('SessionWatcher getByCwd', () => {
     assert.equal(watcher.getByCwd('/projects/alpha'), null);
   });
 });
+
+describe('SessionWatcher no-pid sessions', () => {
+  it('keeps an already active no-pid session alive after the recent-file window', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orthanc-session-watcher-'));
+    const sessionFile = path.join(root, 'session.jsonl');
+    fs.writeFileSync(sessionFile, '{}\n');
+    const oldTime = new Date(Date.now() - 30 * 60 * 1000);
+    fs.utimesSync(sessionFile, oldTime, oldTime);
+
+    const provider = new NoPidProvider(root);
+    const watcher = new SessionWatcher(provider, null);
+    watcher.sessions.set(-1, {
+      pid: -1,
+      sessionId: 'codex-session',
+      sessionFilePath: sessionFile,
+      hasRealPid: false,
+      cwd: '/projects/codex',
+      startedAt: Date.now() - 60 * 60 * 1000,
+      name: 'codex',
+      alive: true,
+      uptime: 0,
+    });
+
+    watcher.poll();
+
+    const session = watcher.getBySessionId('codex-session');
+    assert.ok(session);
+    assert.equal(session.pid, -1);
+    assert.equal(session.hasRealPid, false);
+  });
+});
+
+class NoPidProvider extends Provider {
+  constructor(private readonly root: string) {
+    super();
+  }
+
+  get name(): string {
+    return 'codex';
+  }
+
+  get displayName(): string {
+    return 'Codex CLI';
+  }
+
+  getSessionsDir(): string {
+    return this.root;
+  }
+
+  listSessionFiles(): string[] {
+    return ['session.jsonl'];
+  }
+
+  parseSessionFile(filePath: string): SessionData {
+    return {
+      pid: -1,
+      sessionId: 'codex-session',
+      sessionFilePath: filePath,
+      hasRealPid: false,
+      cwd: '/projects/codex',
+      startedAt: Date.now() - 60 * 60 * 1000,
+      name: 'codex',
+    };
+  }
+
+  getHookEvents(): string[] {
+    return [];
+  }
+
+  installHooks(): never {
+    throw new Error('not implemented');
+  }
+
+  uninstallHooks(): never {
+    throw new Error('not implemented');
+  }
+
+  getConfigDirName(): string {
+    return '.codex';
+  }
+
+  parseProjectConfig(): never {
+    throw new Error('not implemented');
+  }
+
+  getProjectsDir(): string {
+    return this.root;
+  }
+
+  getTokenPricing(): Record<string, never> {
+    return {};
+  }
+
+  getDefaultPricing(): never {
+    throw new Error('not implemented');
+  }
+
+  parseUsageRecord(): null {
+    return null;
+  }
+}

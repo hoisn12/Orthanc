@@ -46,13 +46,14 @@ export class SessionWatcher {
 
         if (this.projectFilter && !isSubpath(data.cwd, this.projectFilter)) continue;
 
-        const alive = data.hasRealPid === false ? isRecentSessionFile(filePath) : isProcessAlive(pid);
+        const existing = this.sessions.get(pid);
+        const alive =
+          data.hasRealPid === false ? existing?.alive || isRecentSessionFile(filePath) : isProcessAlive(pid);
         if (!alive) continue;
         currentPids.add(pid);
 
         const uptime = Date.now() - data.startedAt;
 
-        const existing = this.sessions.get(pid);
         this.sessions.set(pid, {
           pid,
           sessionId: data.sessionId,

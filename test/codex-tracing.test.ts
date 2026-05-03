@@ -108,6 +108,42 @@ describe('CodexProvider monitor install', () => {
     assert.deepEqual(after.PreToolUse, [{ command: 'echo user hook', timeout: 1 }]);
   });
 
+  it('does not treat user hooks with similar command names or urls as monitor hooks', () => {
+    const codexHome = makeTempCodexHome();
+    const hooksPath = path.join(codexHome, 'hooks.json');
+    const similarCommand = 'node /tmp/codex-hook.js --event PreToolUse';
+    const similarUrl = 'http://localhost:7999/api/events/pre-tool-use';
+    fs.writeFileSync(
+      hooksPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              { command: similarCommand, timeout: 1 },
+              { url: similarUrl, type: 'http', timeout: 1 },
+              { command: 'node /tmp/codex-hook.js --marker __claude_monitor__', timeout: 5 },
+            ],
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+
+    const provider = new CodexProvider();
+    assert.equal(provider.getMonitorStatus('/tmp/project').hooks, true);
+
+    const removed = provider.uninstallHooks('/tmp/project', { hooks: true, otel: false });
+    assert.equal(removed.removed, 1);
+
+    const after = JSON.parse(fs.readFileSync(hooksPath, 'utf-8')) as any;
+    assert.deepEqual(after.hooks.PreToolUse, [
+      { command: similarCommand, timeout: 1 },
+      { url: similarUrl, type: 'http', timeout: 1 },
+    ]);
+    assert.equal(provider.getMonitorStatus('/tmp/project').hooks, false);
+  });
+
   it('installs marked otel config and refuses to overwrite user otel config', () => {
     const codexHome = makeTempCodexHome();
     const provider = new CodexProvider();

@@ -568,12 +568,7 @@ function getAllHookContainers(hooksFile: Record<string, any>): Record<string, Co
 }
 
 function isMonitorHook(hook: CodexHookEntry): boolean {
-  return (
-    hook._marker === MONITOR_MARKER ||
-    hook.command?.includes(MONITOR_MARKER) === true ||
-    hook.command?.includes('codex-hook.js') === true ||
-    hook.url?.match(/^http:\/\/localhost:\d+\/api\/events\//) != null
-  );
+  return hook._marker === MONITOR_MARKER || hook.command?.includes(`--marker ${MONITOR_MARKER}`) === true;
 }
 
 function readJsonSafe(filePath: string): Record<string, any> {
