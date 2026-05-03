@@ -1612,7 +1612,7 @@ const HOOK_EVENTS_COUNT = 12;
 async function fetchTokenUsage() {
   try {
     const params = new URLSearchParams();
-    const { from, to, model, session, tool } = state.tokenFilter;
+    const { from, to, model, session } = state.tokenFilter;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     if (model) params.set('model', model);
@@ -2168,7 +2168,7 @@ async function fetchAnalyticsData() {
   try {
     const tokenParams = new URLSearchParams();
     const metricsParams = new URLSearchParams();
-    const { from, to, model, session } = state.tokenFilter;
+    const { from, to, model, session, tool } = state.tokenFilter;
     if (from) {
       tokenParams.set('from', from);
       metricsParams.set('from', String(new Date(from).getTime()));
@@ -2184,6 +2184,9 @@ async function fetchAnalyticsData() {
     if (session) {
       tokenParams.set('session', session);
       metricsParams.set('session', session);
+    }
+    if (tool) {
+      metricsParams.set('tool', tool);
     }
 
     const [tokensRes, metricsRes] = await Promise.all([
