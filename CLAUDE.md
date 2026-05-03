@@ -81,39 +81,57 @@ PID 존재 여부로 프로세스 생존 확인.
 - **Module**: ESM (`"type": "module"`)
 - **Style**: 별도 빌드 도구 없음, vanilla JS/CSS/HTML
 
+## Git Worktree Guidelines
+
+- worktree는 저장소 내부가 아닌 sibling 디렉터리 `../Orthanc-worktrees/<branch-or-ticket>`에 만든다.
+- 새 브랜치 작업은 `git worktree add ../Orthanc-worktrees/<branch-or-ticket> -b <branch>` 형식을 사용한다.
+- 기존 브랜치 작업은 `git worktree add ../Orthanc-worktrees/<branch-or-ticket> <branch>` 형식을 사용한다.
+- `Orthanc/` 내부에는 worktree를 만들지 않는다. 검색, watcher, 테스트, IDE 인덱싱에 중첩 저장소가 섞일 수 있다.
+- `npm start`, `npm test`, `npm run build/typecheck/lint/format` 계열 명령은 `scripts/ensure-worktree.sh`를 먼저 실행한다.
+- guard 실패 시 작업 위치를 `../Orthanc-worktrees/<branch-or-ticket>`로 옮긴 뒤 다시 실행한다.
+- CI 환경(`CI=true`)은 자동 검증 경로 호환성을 위해 guard를 통과시킨다.
+
 ## Work Instructions
 
-코드 수정/추가/삭제를 수반하는 작업에 한해 아래 5단계를 순서대로 따른다.
+코드 수정/추가/삭제를 수반하는 작업에 한해 아래 6단계를 순서대로 따른다.
 단순 질문, 파일 조회, 설명 요청 등에는 적용하지 않는다.
 
-## Shared Skills
+### 1. Worktree Setup (작업 트리 준비)
 
-Claude와 Codex가 같은 skill 원본을 사용하도록 공통 원본은 `.shared/skills/`에 둔다.
-`.claude/skills/*`와 `.codex/skills/orthanc-*`는 이 공통 폴더를 가리키는 심볼릭 링크로 관리한다.
+- 현재 작업 경로가 요청 작업에 적합한 worktree인지 확인
+- 새 worktree가 필요하면 `../Orthanc-worktrees/<branch-or-ticket>` 경로에 생성하고 그 경로에서 작업
+- 이미 적절한 worktree에서 작업 중이면 새 worktree를 만들지 않고 그대로 진행
+- `Orthanc/` 내부에는 worktree를 만들지 않는다
+- 작업 명령 실행 전 `npm run ensure:worktree` 또는 `scripts/ensure-worktree.sh`로 guard 통과 여부를 확인
 
-### 1. Plan (계획 수립)
+### 2. Plan (계획 수립)
 
 - 작업 요청을 분석하고 변경 대상 파일, 영향 범위, 구현 순서를 정리
 - 기존 코드 패턴과 유틸리티를 먼저 파악하여 재사용
 - 계획을 사용자에게 제시하고 승인을 받은 후 다음 단계로 진행
 
-### 2. Plan Review (계획 리뷰)
+### 3. Plan Review (계획 리뷰)
 
 - Plan 완료 후 자동으로 `/plan-review` 스킬을 실행하여 계획을 검증
 - **미통과 시**: 미통과 항목을 수정하여 Plan 단계로 돌아간 뒤 재검증
 
-### 3. Act (계획 실행)
+### 4. Act (계획 실행)
 
 - 승인된 계획에 따라 코드 변경 수행
 - 계획 범위를 벗어나는 변경 금지
 - 단계별 진행 상황을 사용자에게 공유
 
-### 4. Code Review (코드 리뷰)
+### 5. Code Review (코드 리뷰)
 
 - Act 완료 후 자동으로 `/code-review` 스킬을 실행하여 변경 코드를 검토
 - **미통과 시**: 미통과 항목을 수정한 뒤 Code Review를 재실행
 
-### 5. Risk Review (리스크 리뷰)
+### 6. Risk Review (리스크 리뷰)
 
 - Code Review 통과 후 자동으로 `/risk-review` 스킬을 실행하여 위험 요소를 점검
 - **High 리스크 발견 시**: 사용자에게 보고하고 승인을 받은 후 완료 처리
+
+## Shared Skills
+
+Claude와 Codex가 같은 skill 원본을 사용하도록 공통 원본은 `.shared/skills/`에 둔다.
+`.claude/skills/*`와 `.codex/skills/orthanc-*`는 이 공통 폴더를 가리키는 심볼릭 링크로 관리한다.
