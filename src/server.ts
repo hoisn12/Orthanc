@@ -28,6 +28,7 @@ interface ServerInstance {
 }
 
 type CacheHealthStatus = 'healthy' | 'degraded' | 'broken' | 'unknown';
+export type TraceTreeNode = import('./types.js').EventEntry & { children: TraceTreeNode[] };
 
 function computeCacheHealth(trend: { cacheRead: number; input: number }[]): CacheHealthStatus {
   // Filter out messages where we can't compute a meaningful hit rate
@@ -50,6 +51,29 @@ function computeCacheHealth(trend: { cacheRead: number; input: number }[]): Cach
 
   if (recentAvg < 0.2) return 'degraded';
   return 'healthy';
+}
+
+export function buildTraceTree(events: import('./types.js').EventEntry[]): TraceTreeNode | null {
+  if (events.length === 0) return null;
+
+  const byId = new Map<string, TraceTreeNode>();
+  for (const e of events) {
+    byId.set(e.id, { ...e, children: [] });
+  }
+
+  const root =
+    [...byId.values()].find((node) => !node.parentId && node.type === 'user-prompt-submit') ||
+    [...byId.values()].find((node) => !node.parentId) ||
+    byId.values().next().value!;
+
+  for (const node of byId.values()) {
+    if (node.id === root.id) continue;
+
+    const parent = node.parentId ? byId.get(node.parentId) : null;
+    (parent || root).children.push(node);
+  }
+
+  return root;
 }
 
 export function createServer({
@@ -256,21 +280,7 @@ export function createServer({
       return;
     }
 
-    // Build tree from flat list
-    type TreeNode = (typeof events)[number] & { children: TreeNode[] };
-    const byId = new Map<string, TreeNode>();
-    for (const e of events) {
-      byId.set(e.id, { ...e, children: [] });
-    }
-    let root: TreeNode | null = null;
-    for (const node of byId.values()) {
-      if (!node.parentId || !byId.has(node.parentId)) {
-        root = root || node;
-      } else {
-        byId.get(node.parentId)!.children.push(node);
-      }
-    }
-    res.json(root || events[0]);
+    res.json(buildTraceTree(events));
   });
 
   // SSE endpoint
