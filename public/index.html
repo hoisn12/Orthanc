@@ -19,6 +19,10 @@
           <span class="snb-icon">&#9673;</span>
           <span class="snb-label">Tokens</span>
         </a>
+        <a class="snb-item" data-page="analytics" href="#">
+          <span class="snb-icon">&#9636;</span>
+          <span class="snb-label">Analytics</span>
+        </a>
         <a class="snb-item" data-page="harness" href="#">
           <span class="snb-icon">&#9881;</span>
           <span class="snb-label">Harness</span>
@@ -60,6 +64,13 @@
         <div class="page" id="page-tokens">
           <div class="page-scroll">
             <div id="tokenUsage"><span style="color: var(--text-muted); font-size: 12px">Loading...</span></div>
+          </div>
+        </div>
+
+        <!-- Page: Analytics -->
+        <div class="page" id="page-analytics">
+          <div class="page-scroll">
+            <div id="analyticsPage"><span style="color: var(--text-muted); font-size: 12px">Loading...</span></div>
           </div>
         </div>
 
@@ -180,6 +191,7 @@
     </dialog>
 
     <script src="/vendor/marked.umd.js"></script>
+    <script src="/vendor/chartjs/chart.umd.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

@@ -94,6 +94,7 @@ export function createServer({
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '..', '..', 'public')));
   app.use('/vendor', express.static(path.join(__dirname, '..', '..', 'node_modules', 'marked', 'lib')));
+  app.use('/vendor/chartjs', express.static(path.join(__dirname, '..', '..', 'node_modules', 'chart.js', 'dist')));
 
   // --- REST API ---
 
