@@ -6,6 +6,7 @@ import type { SessionWatcher } from './session-watcher.js';
 import type { EventStore } from './event-store.js';
 import type { TokenStore } from './token-store.js';
 import type { SessionInfo } from './types.js';
+import type { TraceManager } from './trace-manager.js';
 
 interface FileState {
   byteOffset: number;
@@ -18,6 +19,7 @@ interface JsonlWatcherOptions {
   sessionWatcher: SessionWatcher;
   eventStore: EventStore;
   tokenStore: TokenStore;
+  traceManager?: TraceManager;
   projectRoot: string;
   pollInterval?: number;
 }
@@ -31,6 +33,7 @@ export class JsonlWatcher {
   sessionWatcher: SessionWatcher;
   eventStore: EventStore;
   tokenStore: TokenStore;
+  traceManager: TraceManager | null;
   projectRoot: string;
   pollInterval: number;
   timer: ReturnType<typeof setInterval> | null;
@@ -42,6 +45,7 @@ export class JsonlWatcher {
     sessionWatcher,
     eventStore,
     tokenStore,
+    traceManager,
     projectRoot,
     pollInterval = 1000,
   }: JsonlWatcherOptions) {
@@ -49,6 +53,7 @@ export class JsonlWatcher {
     this.sessionWatcher = sessionWatcher;
     this.eventStore = eventStore;
     this.tokenStore = tokenStore;
+    this.traceManager = traceManager || null;
     this.projectRoot = projectRoot;
     this.pollInterval = pollInterval;
     this.timer = null;
@@ -76,7 +81,7 @@ export class JsonlWatcher {
   }
 
   poll(): void {
-    if (!this.projectDir) return;
+    if (!this.projectDir && this.provider.name !== 'codex') return;
 
     const activeSessions = this.sessionWatcher.getSessions();
     if (activeSessions.length === 0) return;
@@ -96,7 +101,8 @@ export class JsonlWatcher {
       const sessionDir = session.cwd ? findProjectDir(projectsDir, session.cwd) : null;
       const dir = sessionDir || this.projectDir;
       const effectiveId = session.activeSessionId || session.sessionId;
-      const filePath = path.join(dir, `${effectiveId}.jsonl`);
+      if (!session.sessionFilePath && !dir) continue;
+      const filePath = session.sessionFilePath || path.join(dir!, `${effectiveId}.jsonl`);
       this.pollFile(filePath, session);
     }
   }
@@ -185,6 +191,8 @@ export class JsonlWatcher {
       }
     }
 
+    if (this.provider.name === 'codex' && this.processCodexLine(record, session)) return;
+
     // Only care about assistant messages with content
     if (record.type !== 'assistant') return;
     const msg = record.message;
@@ -203,8 +211,6 @@ export class JsonlWatcher {
     if (textParts.length === 0) return;
 
     const text = textParts.join('\n');
-    const isComplete = msg.stop_reason != null;
-
     // Deduplicate: skip if same message at same or shorter content length
     const prevLength = state.knownMessages.get(msgId) || 0;
     if (text.length <= prevLength) return;
@@ -218,15 +224,126 @@ export class JsonlWatcher {
       }
     }
 
-    this.eventStore.add({
-      type: 'assistant-streaming',
-      payload: {
+    this.addTracedEvent(
+      'assistant-streaming',
+      {
         message_id: msgId,
         text,
         model: msg.model || record.model || '',
       },
+      session,
+    );
+  }
+
+  private processCodexLine(record: any, session: SessionInfo): boolean {
+    const payload = record.payload || {};
+
+    if (record.type === 'event_msg' && payload.type === 'user_message') {
+      this.addTracedEvent(
+        'user-prompt-submit',
+        {
+          prompt: payload.message || '',
+          session_id: session.sessionId,
+          source: 'codex-jsonl',
+        },
+        session,
+      );
+      return true;
+    }
+
+    if (record.type === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
+      const text = extractCodexText(payload.content);
+      if (!text) return true;
+      this.addTracedEvent(
+        'assistant-streaming',
+        {
+          message_id: payload.id || `${session.sessionId}-${record.timestamp || Date.now()}`,
+          text,
+          phase: payload.phase || '',
+          source: 'codex-jsonl',
+        },
+        session,
+      );
+      return true;
+    }
+
+    if (record.type === 'response_item' && payload.type === 'function_call') {
+      this.addTracedEvent(
+        'pre-tool-use',
+        {
+          tool_name: payload.name || 'unknown',
+          tool_input: parseJsonMaybe(payload.arguments),
+          call_id: payload.call_id,
+          source: 'codex-jsonl',
+        },
+        session,
+      );
+      return true;
+    }
+
+    if (record.type === 'event_msg' && payload.type === 'exec_command_end') {
+      this.addTracedEvent(
+        'post-tool-use',
+        {
+          tool_name: 'exec_command',
+          call_id: payload.call_id,
+          command: payload.command,
+          cwd: payload.cwd,
+          exit_code: payload.exit_code,
+          duration: payload.duration,
+          stdout: payload.stdout,
+          stderr: payload.stderr,
+          source: 'codex-jsonl',
+        },
+        session,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  private addTracedEvent(type: string, payload: Record<string, unknown>, session: SessionInfo): void {
+    const trace = this.traceManager
+      ? this.traceManager.assignTrace(type, session.pid, session.sessionId)
+      : { traceId: null, parentId: null };
+
+    const event = this.eventStore.add({
+      type,
+      payload,
       sessionId: session.sessionId,
       pid: session.pid,
+      traceId: trace.traceId,
+      parentId: trace.parentId,
     });
+
+    if (type === 'user-prompt-submit') {
+      this.traceManager?.setRootEventId(event.id, session.pid, session.sessionId);
+    } else if (type === 'subagent-start') {
+      this.traceManager?.pushSpan(event.id, session.pid, session.sessionId);
+    }
+  }
+}
+
+function extractCodexText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block && typeof block === 'object') {
+      const b = block as Record<string, unknown>;
+      if ((b.type === 'output_text' || b.type === 'text') && typeof b.text === 'string') {
+        parts.push(b.text);
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
+function parseJsonMaybe(value: unknown): unknown {
+  if (typeof value !== 'string') return value ?? null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
   }
 }

@@ -6,6 +6,8 @@ export interface SessionData {
   pid: number;
   sessionId: string;
   activeSessionId?: string;
+  sessionFilePath?: string;
+  hasRealPid?: boolean;
   cwd: string;
   startedAt: number;
   kind?: string;

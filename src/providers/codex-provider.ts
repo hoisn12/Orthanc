@@ -20,6 +20,7 @@ import type {
 const MONITOR_MARKER = '__claude_monitor__';
 
 const HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart'];
+const MAX_SESSION_FILES = 200;
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'vendor', '__pycache__']);
 const MAX_DEPTH = 5;
@@ -35,10 +36,11 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
 const DEFAULT_PRICING: ModelPricing = { input: 2, output: 8, cache_read: 0.5, cache_create: 2 };
 
 interface CodexHookEntry {
-  type: string;
+  type?: string;
   url?: string;
   command?: string;
   timeout?: number;
+  statusMessage?: string;
   _marker?: string;
   matcher?: string;
 }
@@ -66,29 +68,43 @@ export class CodexProvider extends Provider {
   // ── Sessions ──────────────────────────────────────────────
 
   getSessionsDir(): string {
-    return path.join(os.homedir(), '.codex', 'sessions');
+    return path.join(getCodexHome(), 'sessions');
   }
 
   listSessionFiles(): string[] {
     const dir = this.getSessionsDir();
     if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    const files: { rel: string; mtimeMs: number }[] = [];
+    collectJsonlFiles(dir, dir, files);
+    return files
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(0, MAX_SESSION_FILES)
+      .map((f) => f.rel);
   }
 
   parseSessionFile(filePath: string): SessionData | null {
-    // Codex sessions are JSONL — read the first line for metadata
+    // Codex sessions are JSONL. Current Codex writes a session_meta first line.
     const content = fs.readFileSync(filePath, 'utf-8');
     const firstLine = content.split('\n').find((l) => l.trim());
     if (!firstLine) return null;
 
-    const data = JSON.parse(firstLine) as Record<string, any>;
+    const line = JSON.parse(firstLine) as Record<string, any>;
+    const data = line.type === 'session_meta' && line.payload ? line.payload : line;
+    const sessionId = data.id || data.session_id || data.sessionId || path.basename(filePath, '.jsonl');
+    const pid = data.pid || syntheticPid(String(sessionId));
     return {
-      pid: data.pid,
-      sessionId: data.session_id || data.sessionId || path.basename(filePath, '.jsonl'),
-      cwd: data.cwd || data.working_directory,
-      startedAt: data.started_at ? new Date(data.started_at).getTime() : data.startedAt,
-      kind: data.kind || 'interactive',
-      name: data.name || `codex-${data.pid}`,
+      pid,
+      sessionId,
+      sessionFilePath: filePath,
+      hasRealPid: typeof data.pid === 'number' && data.pid > 0,
+      cwd: data.cwd || data.working_directory || '',
+      startedAt: data.timestamp
+        ? new Date(data.timestamp).getTime()
+        : data.started_at
+          ? new Date(data.started_at).getTime()
+          : data.startedAt || fs.statSync(filePath).birthtimeMs,
+      kind: data.kind || data.originator || 'interactive',
+      name: data.name || `codex-${String(sessionId).slice(0, 8)}`,
       entrypoint: data.entrypoint || 'codex',
     };
   }
@@ -99,9 +115,9 @@ export class CodexProvider extends Provider {
     return HOOK_EVENTS;
   }
 
-  installHooks(projectRoot: string, port: number = 7432, options: InstallOptions = {}): InstallResult {
+  installHooks(_projectRoot: string, port: number = 7432, options: InstallOptions = {}): InstallResult {
     const { hooks = true, otel = true } = options;
-    const codexDir = path.join(projectRoot, '.codex');
+    const codexDir = getCodexHome();
     if (!fs.existsSync(codexDir)) {
       fs.mkdirSync(codexDir, { recursive: true });
     }
@@ -110,19 +126,19 @@ export class CodexProvider extends Provider {
     const hooksPath = path.join(codexDir, 'hooks.json');
 
     if (hooks) {
-      const hooksData = readJsonSafe(hooksPath) as Record<string, CodexHookEntry[]>;
+      const hooksFile = readJsonSafe(hooksPath) as Record<string, any>;
+      const hooksData = getHooksContainer(hooksFile);
       for (const event of HOOK_EVENTS) {
         if (!hooksData[event]) hooksData[event] = [];
-        const existing = hooksData[event].find((h) => h._marker === MONITOR_MARKER);
-        if (existing) continue;
+        hooksData[event] = hooksData[event].filter((h) => !isMonitorHook(h));
         hooksData[event].push({
-          type: 'http',
-          url: `http://localhost:${port}/api/events/${kebab(event)}`,
+          command: buildHookCommand(event, port),
           timeout: 5,
-          _marker: MONITOR_MARKER,
+          statusMessage: 'Orthanc monitor',
         });
       }
-      fs.writeFileSync(hooksPath, JSON.stringify(hooksData, null, 2) + '\n');
+      hooksFile.hooks = hooksData;
+      fs.writeFileSync(hooksPath, JSON.stringify(hooksFile, null, 2) + '\n');
       installedCount = HOOK_EVENTS.length;
     }
 
@@ -134,22 +150,29 @@ export class CodexProvider extends Provider {
     return { installed: installedCount, path: hooksPath, otel: otelResult };
   }
 
-  uninstallHooks(projectRoot: string, options: InstallOptions = {}): UninstallResult {
+  uninstallHooks(_projectRoot: string, options: InstallOptions = {}): UninstallResult {
     const { hooks = true, otel = true } = options;
-    const hooksPath = path.join(projectRoot, '.codex', 'hooks.json');
+    const hooksPath = path.join(getCodexHome(), 'hooks.json');
 
     let removed = 0;
     if (hooks) {
-      const hooksData = readJsonSafe(hooksPath) as Record<string, CodexHookEntry[]>;
-      for (const event of Object.keys(hooksData)) {
-        const entries = hooksData[event];
-        if (!entries) continue;
-        const before = entries.length;
-        hooksData[event] = entries.filter((h) => h._marker !== MONITOR_MARKER);
-        removed += before - hooksData[event]!.length;
-        if (hooksData[event]!.length === 0) delete hooksData[event];
+      const hooksFile = readJsonSafe(hooksPath) as Record<string, any>;
+      for (const hooksData of getAllHookContainers(hooksFile)) {
+        for (const event of Object.keys(hooksData)) {
+          const entries = hooksData[event];
+          if (!entries) continue;
+          const before = entries.length;
+          hooksData[event] = entries.filter((h) => !isMonitorHook(h));
+          removed += before - hooksData[event]!.length;
+          if (hooksData[event]!.length === 0) delete hooksData[event];
+        }
       }
-      fs.writeFileSync(hooksPath, JSON.stringify(hooksData, null, 2) + '\n');
+      for (const event of Object.keys(hooksFile)) {
+        const entries = hooksFile[event];
+        if (!entries) continue;
+        if (HOOK_EVENTS.includes(event) && Array.isArray(entries) && entries.length === 0) delete hooksFile[event];
+      }
+      fs.writeFileSync(hooksPath, JSON.stringify(hooksFile, null, 2) + '\n');
     }
 
     if (otel) {
@@ -159,19 +182,22 @@ export class CodexProvider extends Provider {
     return { removed, path: hooksPath };
   }
 
-  getMonitorStatus(projectRoot: string): MonitorStatus {
-    const hooksPath = path.join(projectRoot, '.codex', 'hooks.json');
-    const hooksData = readJsonSafe(hooksPath) as Record<string, CodexHookEntry[]>;
+  getMonitorStatus(_projectRoot: string): MonitorStatus {
+    const hooksPath = path.join(getCodexHome(), 'hooks.json');
+    const hooksFile = readJsonSafe(hooksPath) as Record<string, any>;
 
     let hasHooks = false;
-    for (const entries of Object.values(hooksData)) {
-      if (Array.isArray(entries) && entries.some((h) => h._marker === MONITOR_MARKER)) {
-        hasHooks = true;
-        break;
+    for (const hooksData of getAllHookContainers(hooksFile)) {
+      for (const entries of Object.values(hooksData)) {
+        if (Array.isArray(entries) && entries.some((h) => isMonitorHook(h))) {
+          hasHooks = true;
+          break;
+        }
       }
+      if (hasHooks) break;
     }
 
-    const configPath = path.join(os.homedir(), '.codex', 'config.toml');
+    const configPath = path.join(getCodexHome(), 'config.toml');
     let hasOtel = false;
     try {
       const content = fs.readFileSync(configPath, 'utf-8');
@@ -186,7 +212,7 @@ export class CodexProvider extends Provider {
   // ── OTel config helpers ────────────────────────────────────
 
   private _installOtelConfig(port: number): boolean {
-    const configPath = path.join(os.homedir(), '.codex', 'config.toml');
+    const configPath = path.join(getCodexHome(), 'config.toml');
     let content = '';
     try {
       content = fs.readFileSync(configPath, 'utf-8');
@@ -194,11 +220,14 @@ export class CodexProvider extends Provider {
       /* new file */
     }
 
-    const otelBlock = `# __claude_monitor__ OTel config\n[otel]\nexporter = { otlp-http = { endpoint = "http://localhost:${port}" } }`;
+    const otelBlock = `# __claude_monitor__ OTel config\n[otel]\nlog_user_prompt = true\nexporter = { otlp-http = { endpoint = "http://localhost:${port}/v1/logs", protocol = "json" } }\ntrace_exporter = { otlp-http = { endpoint = "http://localhost:${port}/v1/traces", protocol = "json" } }`;
 
     if (content.includes('__claude_monitor__ OTel')) {
       // Replace existing monitor OTel block
-      content = content.replace(/# __claude_monitor__ OTel config\n\[otel\]\nexporter\s*=\s*\{[^\n]*\}/, otelBlock);
+      content = content.replace(
+        /# __claude_monitor__ OTel config\n\[otel\]\n(?:[^\n]*\n?)*?(?=\n\[|$)/,
+        otelBlock + '\n',
+      );
     } else if (content.includes('[otel]')) {
       // OTel section exists but not ours — don't overwrite user config
       return false;
@@ -213,8 +242,8 @@ export class CodexProvider extends Provider {
   }
 
   private _uninstallOtelConfig(): void {
-    const configPath = path.join(os.homedir(), '.codex', 'config.toml');
-    let content = '';
+    const configPath = path.join(getCodexHome(), 'config.toml');
+    let content: string;
     try {
       content = fs.readFileSync(configPath, 'utf-8');
     } catch {
@@ -223,7 +252,7 @@ export class CodexProvider extends Provider {
 
     if (!content.includes('__claude_monitor__ OTel')) return;
 
-    content = content.replace(/\n*# __claude_monitor__ OTel config\n\[otel\]\nexporter\s*=\s*\{[^\n]*\}\n?/, '');
+    content = content.replace(/\n*# __claude_monitor__ OTel config\n\[otel\]\n(?:[^\n]*\n?)*?(?=\n\[|$)/, '');
     fs.writeFileSync(configPath, content);
   }
 
@@ -234,7 +263,7 @@ export class CodexProvider extends Provider {
   }
 
   parseProjectConfig(projectRoot: string): ProjectConfig {
-    const globalDir = path.join(os.homedir(), '.codex');
+    const globalDir = getCodexHome();
     const codexDirs = findConfigDirs(projectRoot, '.codex');
     const allDirs = [globalDir, ...codexDirs];
 
@@ -258,7 +287,7 @@ export class CodexProvider extends Provider {
   // ── Tokens ────────────────────────────────────────────────
 
   getProjectsDir(): string {
-    return path.join(os.homedir(), '.codex', 'projects');
+    return path.join(getCodexHome(), 'projects');
   }
 
   getTokenPricing(): Record<string, ModelPricing> {
@@ -375,16 +404,25 @@ function mergePlugins(dirs: string[]): PluginInfo[] {
 function mergeHooks(dirs: string[]): Record<string, HookRule[]> {
   const result: Record<string, HookRule[]> = {};
   for (const codexDir of dirs) {
-    const hooks = readJsonSafe(path.join(codexDir, 'hooks.json')) as Record<string, CodexHookEntry[]>;
-    for (const [event, entries] of Object.entries(hooks)) {
-      if (!Array.isArray(entries)) continue;
-      if (!result[event]) result[event] = [];
-      for (const entry of entries) {
-        result[event].push({
-          matcher: entry.matcher || '*',
-          hooks: [{ type: entry.type, url: entry.url, command: entry.command, _marker: entry._marker }],
-          source: codexDir,
-        });
+    const hooksFile = readJsonSafe(path.join(codexDir, 'hooks.json'));
+    for (const hooks of getAllHookContainers(hooksFile)) {
+      for (const [event, entries] of Object.entries(hooks)) {
+        if (!Array.isArray(entries)) continue;
+        if (!result[event]) result[event] = [];
+        for (const entry of entries) {
+          result[event].push({
+            matcher: entry.matcher || '*',
+            hooks: [
+              {
+                type: entry.type || 'command',
+                url: entry.url,
+                command: entry.command,
+                _marker: isMonitorHook(entry) ? MONITOR_MARKER : entry._marker,
+              },
+            ],
+            source: codexDir,
+          });
+        }
       }
     }
   }
@@ -442,7 +480,7 @@ function buildSettingsLayers(dirs: string[]): SettingsLayer[] {
       const config = readJsonSafe(path.join(codexDir, 'config.json'));
       const hooks = readJsonSafe(path.join(codexDir, 'hooks.json'));
       const hasToml = fs.existsSync(path.join(codexDir, 'config.toml'));
-      const isGlobal = codexDir === path.join(os.homedir(), '.codex');
+      const isGlobal = codexDir === getCodexHome();
 
       return {
         path: codexDir,
@@ -458,6 +496,79 @@ function buildSettingsLayers(dirs: string[]): SettingsLayer[] {
         },
       };
     });
+}
+
+function getCodexHome(): string {
+  return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+}
+
+function collectJsonlFiles(root: string, dir: string, files: { rel: string; mtimeMs: number }[]): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectJsonlFiles(root, fullPath, files);
+    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      try {
+        files.push({ rel: path.relative(root, fullPath), mtimeMs: fs.statSync(fullPath).mtimeMs });
+      } catch {
+        /* ignore stat races */
+      }
+    }
+  }
+}
+
+function syntheticPid(sessionId: string): number {
+  let hash = 0;
+  for (let i = 0; i < sessionId.length; i++) {
+    hash = (hash * 31 + sessionId.charCodeAt(i)) | 0;
+  }
+  return -Math.max(Math.abs(hash), 1);
+}
+
+function buildHookCommand(event: string, port: number): string {
+  const providerFile = new URL(import.meta.url).pathname;
+  const distRoot = path.dirname(path.dirname(path.dirname(providerFile)));
+  const scriptPath = path.join(distRoot, 'bin', 'codex-hook.js');
+  return `${shellQuote(process.execPath)} ${shellQuote(scriptPath)} --port ${port} --event ${event} --marker ${MONITOR_MARKER}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function getHooksContainer(hooksFile: Record<string, any>): Record<string, CodexHookEntry[]> {
+  if (hooksFile.hooks && typeof hooksFile.hooks === 'object' && !Array.isArray(hooksFile.hooks)) {
+    return hooksFile.hooks as Record<string, CodexHookEntry[]>;
+  }
+
+  const hooks: Record<string, CodexHookEntry[]> = {};
+  for (const event of HOOK_EVENTS) {
+    const entries = hooksFile[event];
+    if (Array.isArray(entries)) hooks[event] = entries;
+  }
+  return hooks;
+}
+
+function getAllHookContainers(hooksFile: Record<string, any>): Record<string, CodexHookEntry[]>[] {
+  const containers: Record<string, CodexHookEntry[]>[] = [];
+  if (hooksFile.hooks && typeof hooksFile.hooks === 'object' && !Array.isArray(hooksFile.hooks)) {
+    containers.push(hooksFile.hooks as Record<string, CodexHookEntry[]>);
+  }
+  if (HOOK_EVENTS.some((event) => Array.isArray(hooksFile[event]))) {
+    containers.push(hooksFile as Record<string, CodexHookEntry[]>);
+  }
+  return containers;
+}
+
+function isMonitorHook(hook: CodexHookEntry): boolean {
+  return hook._marker === MONITOR_MARKER || hook.command?.includes(`--marker ${MONITOR_MARKER}`) === true;
 }
 
 function readJsonSafe(filePath: string): Record<string, any> {
@@ -476,8 +587,4 @@ function extractFirstHeading(filePath: string): string | null {
   } catch {
     return null;
   }
-}
-
-function kebab(str: string): string {
-  return str.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 }

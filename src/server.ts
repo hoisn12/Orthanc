@@ -739,6 +739,7 @@ export function createServer({
     sessionWatcher,
     eventStore,
     tokenStore,
+    traceManager,
     projectRoot: currentProject,
     pollInterval: 1000,
   });
