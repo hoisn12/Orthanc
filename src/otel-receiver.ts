@@ -14,6 +14,12 @@ const EVENT_MAP: Record<string, string> = {
   'claude_code.tool_result': 'otel-tool-result',
   'claude_code.tool_decision': 'otel-tool-decision',
   'claude_code.user_prompt': 'otel-user-prompt',
+  'codex.api_request': 'otel-api-request',
+  'codex.api_error': 'otel-api-error',
+  'codex.tool_result': 'otel-tool-result',
+  'codex.tool_decision': 'otel-tool-decision',
+  'codex.user_prompt': 'otel-user-prompt',
+  'codex.user_message': 'otel-user-prompt',
 };
 
 type OtelBody = Record<string, unknown>;
@@ -96,7 +102,7 @@ export class OtelReceiver {
     if (!internalType) return;
 
     const timestamp = nanoToMs(record.timeUnixNano);
-    const sessionId = (attrs['session.id'] || resourceAttrs['session.id'] || null) as string | null;
+    const sessionId = getSessionId(attrs, resourceAttrs);
 
     // Assign trace context
     const trace = this.traceManager
@@ -151,9 +157,7 @@ export class OtelReceiver {
     const dataPoints = metric.gauge?.dataPoints || metric.sum?.dataPoints || metric.histogram?.dataPoints;
     if (!Array.isArray(dataPoints)) return;
 
-    for (const _dp of dataPoints) {
-      // Token/cost metrics are handled via logs; metrics endpoint is supplementary
-    }
+    // Token/cost metrics are handled via logs; metrics endpoint is supplementary.
   }
 
   private _processSpan(span: any, resourceAttrs: FlatAttrs): void {
@@ -161,7 +165,7 @@ export class OtelReceiver {
     const startMs = nanoToMs(span.startTimeUnixNano);
     const endMs = nanoToMs(span.endTimeUnixNano);
     const durationMs = endMs - startMs;
-    const sessionId = (attrs['session.id'] || resourceAttrs['session.id'] || null) as string | null;
+    const sessionId = getSessionId(attrs, resourceAttrs);
 
     const spanTrace = this.traceManager
       ? this.traceManager.assignTrace('otel-span', null, sessionId)
@@ -185,9 +189,9 @@ export class OtelReceiver {
     });
 
     // If this looks like a tool execution span, record it
-    if (span.name?.startsWith('tool.') || attrs['tool.name']) {
+    if (span.name?.startsWith('tool.') || attrs['tool.name'] || attrs['tool_name']) {
       this.metricsStore.recordToolExecution({
-        toolName: (attrs['tool.name'] || span.name) as string,
+        toolName: (attrs['tool.name'] || attrs['tool_name'] || span.name) as string,
         durationMs,
         success: span.status?.code !== 2,
         timestamp: startMs,
@@ -224,4 +228,16 @@ function nanoToMs(nanoStr: unknown): number {
   if (!nanoStr) return Date.now();
   const nano = typeof nanoStr === 'string' ? BigInt(nanoStr) : BigInt(nanoStr as number);
   return Number(nano / 1000000n);
+}
+
+function getSessionId(attrs: FlatAttrs, resourceAttrs: FlatAttrs): string | null {
+  return (attrs['session.id'] ||
+    resourceAttrs['session.id'] ||
+    attrs['conversation.id'] ||
+    resourceAttrs['conversation.id'] ||
+    attrs['conversation_id'] ||
+    resourceAttrs['conversation_id'] ||
+    attrs['thread.id'] ||
+    resourceAttrs['thread.id'] ||
+    null) as string | null;
 }

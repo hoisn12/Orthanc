@@ -102,6 +102,10 @@ export class TraceManager {
     }
   }
 
+  hasActiveTrace(pid: number | null, sessionId: string | null): boolean {
+    return this._getContext(pid, sessionId) != null;
+  }
+
   // ── Internal context management ────────────────────────────
 
   private _getContext(pid: number | null, sessionId: string | null): TraceContext | undefined {

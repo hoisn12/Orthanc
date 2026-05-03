@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import type { Provider } from './providers/provider.js';
 import type { SessionInfo } from './types.js';
 
@@ -42,12 +43,12 @@ export class SessionWatcher {
         const data = this.provider.parseSessionFile(filePath);
         if (!data) continue;
         const pid = data.pid;
-        currentPids.add(pid);
 
         if (this.projectFilter && !isSubpath(data.cwd, this.projectFilter)) continue;
 
-        const alive = isProcessAlive(pid);
+        const alive = data.hasRealPid === false ? isRecentSessionFile(filePath) : isProcessAlive(pid);
         if (!alive) continue;
+        currentPids.add(pid);
 
         const uptime = Date.now() - data.startedAt;
 
@@ -56,6 +57,8 @@ export class SessionWatcher {
           pid,
           sessionId: data.sessionId,
           activeSessionId: existing?.activeSessionId,
+          sessionFilePath: data.sessionFilePath,
+          hasRealPid: data.hasRealPid,
           cwd: data.cwd,
           startedAt: data.startedAt,
           kind: data.kind,
@@ -70,8 +73,8 @@ export class SessionWatcher {
     }
 
     // remove dead sessions (file removed or process not alive)
-    for (const [pid] of this.sessions) {
-      if (!currentPids.has(pid) || !isProcessAlive(pid)) {
+    for (const [pid, session] of this.sessions) {
+      if (!currentPids.has(pid) || (session.hasRealPid !== false && !isProcessAlive(pid))) {
         this.sessions.delete(pid);
       }
     }
@@ -127,6 +130,15 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function isRecentSessionFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return Date.now() - stat.mtimeMs < 15 * 60 * 1000;
   } catch {
     return false;
   }

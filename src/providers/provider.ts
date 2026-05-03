@@ -26,7 +26,7 @@ export abstract class Provider {
   /** Absolute path to the directory containing session files */
   abstract getSessionsDir(): string;
 
-  /** List session file names (without directory) */
+  /** List session file names relative to getSessionsDir() */
   abstract listSessionFiles(): string[];
 
   /**
