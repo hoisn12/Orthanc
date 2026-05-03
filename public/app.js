@@ -33,6 +33,7 @@ const state = {
   projectSetup: getDefaultProjectSetupState(),
   analyticsData: null,
   analyticsCharts: {},
+  analyticsRequestId: 0,
 };
 
 // Chart.js dark theme defaults
@@ -1662,7 +1663,7 @@ async function fetchMetrics() {
   }
 }
 
-function renderDateFilter() {
+function renderDateFilter({ showExport = true } = {}) {
   const { preset, from, to } = state.tokenFilter;
   const presets = [
     { key: 'all', label: 'All Time' },
@@ -1710,10 +1711,12 @@ function renderDateFilter() {
     ${hasActiveFilter ? '<button class="filter-clear-btn">Clear</button>' : ''}
   </div>`;
 
-  const exportBtns = `<div class="export-buttons">
+  const exportBtns = showExport
+    ? `<div class="export-buttons">
     <button class="export-btn" data-format="csv" title="Export CSV">CSV</button>
     <button class="export-btn" data-format="json" title="Export JSON">JSON</button>
-  </div>`;
+  </div>`
+    : '';
 
   return `<div class="date-filter-bar">${buttons}${customInputs}</div>${filterDropdowns}${exportBtns}`;
 }
@@ -2160,6 +2163,7 @@ function isCodex() {
 const CHART_COLORS = ['#818cf8', '#34d399', '#60a5fa', '#fbbf24', '#fb923c', '#f87171', '#2dd4bf', '#a78bfa'];
 
 async function fetchAnalyticsData() {
+  const requestId = ++state.analyticsRequestId;
   try {
     const tokenParams = new URLSearchParams();
     const metricsParams = new URLSearchParams();
@@ -2185,10 +2189,14 @@ async function fetchAnalyticsData() {
       fetch('/api/tokens' + (tokenParams.toString() ? '?' + tokenParams : '')),
       fetch('/api/metrics/history' + (metricsParams.toString() ? '?' + metricsParams : '')),
     ]);
-    state.analyticsData = { tokens: await tokensRes.json(), metrics: await metricsRes.json() };
+    const [tokens, metrics] = await Promise.all([tokensRes.json(), metricsRes.json()]);
+    if (requestId !== state.analyticsRequestId) return;
+    state.analyticsData = { tokens, metrics };
     renderAnalytics();
   } catch {
+    if (requestId !== state.analyticsRequestId) return;
     state.analyticsData = null;
+    renderAnalytics();
   }
 }
 
@@ -2202,7 +2210,7 @@ function destroyAnalyticsCharts() {
 function renderAnalytics() {
   const el = document.getElementById('analyticsPage');
   if (!el) return;
-  const filterHTML = renderDateFilter();
+  const filterHTML = renderDateFilter({ showExport: false });
   const d = state.analyticsData;
   if (!d) {
     el.innerHTML = filterHTML + '<div class="analytics-empty">No analytics data available</div>';
