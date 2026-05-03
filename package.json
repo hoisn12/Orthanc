@@ -23,13 +23,22 @@
     "orthanc": "./dist/bin/cli.js"
   },
   "scripts": {
+    "ensure:worktree": "scripts/ensure-worktree.sh",
+    "prebuild": "scripts/ensure-worktree.sh",
     "build": "tsc",
+    "prestart": "scripts/ensure-worktree.sh",
     "start": "tsc && node dist/bin/cli.js",
+    "pretest": "scripts/ensure-worktree.sh",
     "test": "tsc && node --test 'dist/test/*.test.js'",
+    "pretypecheck": "scripts/ensure-worktree.sh",
     "typecheck": "tsc --noEmit",
+    "prelint": "scripts/ensure-worktree.sh",
     "lint": "eslint .",
+    "prelint:fix": "scripts/ensure-worktree.sh",
     "lint:fix": "eslint . --fix",
+    "preformat": "scripts/ensure-worktree.sh",
     "format": "prettier --write .",
+    "preformat:check": "scripts/ensure-worktree.sh",
     "format:check": "prettier --check .",
     "prepare": "husky"
   },
