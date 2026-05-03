@@ -14,7 +14,8 @@ fi
 repo_root=$(git rev-parse --show-toplevel)
 git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
 main_checkout=$(cd "$git_common_dir/.." && pwd -P)
-expected_parent=$(cd "$main_checkout/../Orthanc-worktrees" && pwd -P)
+main_parent=$(cd "$main_checkout/.." && pwd -P)
+expected_parent="$main_parent/Orthanc-worktrees"
 repo_parent=$(cd "$repo_root/.." && pwd -P)
 repo_name=$(basename "$repo_root")
 
