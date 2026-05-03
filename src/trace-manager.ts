@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 interface TraceContext {
   traceId: string;
+  rootEventId: string | null;
   spanStack: string[]; // stack of open span event IDs (subagent nesting)
 }
 
@@ -36,7 +37,7 @@ export class TraceManager {
     // user-prompt-submit creates a new trace root
     if (type === 'user-prompt-submit') {
       const traceId = randomUUID();
-      const ctx: TraceContext = { traceId, spanStack: [] };
+      const ctx: TraceContext = { traceId, rootEventId: null, spanStack: [] };
       this._setContext(pid, sessionId, ctx);
       return { traceId, parentId: null };
     }
@@ -47,7 +48,8 @@ export class TraceManager {
       return { traceId: null, parentId: null };
     }
 
-    const parentId = ctx.spanStack.length > 0 ? ctx.spanStack[ctx.spanStack.length - 1]! : ctx.traceId;
+    const rootParentId = ctx.rootEventId;
+    const parentId = ctx.spanStack.length > 0 ? ctx.spanStack[ctx.spanStack.length - 1]! : rootParentId;
 
     if (type === 'subagent-start') {
       // Will be assigned a parentId; the event's own ID will be pushed
@@ -66,12 +68,12 @@ export class TraceManager {
     if (type === 'stop') {
       const traceId = ctx.traceId;
       this._clearContext(pid, sessionId);
-      return { traceId, parentId: null };
+      return { traceId, parentId };
     }
 
     // assistant-streaming is a direct child of the trace root
     if (type === 'assistant-streaming') {
-      return { traceId: ctx.traceId, parentId: ctx.traceId };
+      return { traceId: ctx.traceId, parentId: rootParentId };
     }
 
     // Default: child of current stack top (or trace root)
@@ -86,6 +88,17 @@ export class TraceManager {
     const ctx = this._getContext(pid, sessionId);
     if (ctx) {
       ctx.spanStack.push(eventId);
+    }
+  }
+
+  /**
+   * After a user-prompt-submit event is stored, save its event ID so root-level
+   * children can link to the actual EventStore entry instead of the trace UUID.
+   */
+  setRootEventId(eventId: string, pid: number | null, sessionId: string | null): void {
+    const ctx = this._getContext(pid, sessionId);
+    if (ctx) {
+      ctx.rootEventId = eventId;
     }
   }
 
