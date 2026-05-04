@@ -87,9 +87,8 @@ PID 존재 여부로 프로세스 생존 확인.
 - 새 브랜치 작업은 `git worktree add ../Orthanc-worktrees/<branch-or-ticket> -b <branch>` 형식을 사용한다.
 - 기존 브랜치 작업은 `git worktree add ../Orthanc-worktrees/<branch-or-ticket> <branch>` 형식을 사용한다.
 - `Orthanc/` 내부에는 worktree를 만들지 않는다. 검색, watcher, 테스트, IDE 인덱싱에 중첩 저장소가 섞일 수 있다.
-- `npm start`, `npm test`, `npm run build/typecheck/lint/format` 계열 명령은 `scripts/ensure-worktree.sh`를 먼저 실행한다.
-- guard 실패 시 작업 위치를 `../Orthanc-worktrees/<branch-or-ticket>`로 옮긴 뒤 다시 실행한다.
-- CI 환경(`CI=true`)은 자동 검증 경로 호환성을 위해 guard를 통과시킨다.
+- 작업 시작 전 `npm run ensure:worktree`로 worktree 위치를 확인한다.
+- guard 실패 시 작업 위치를 `../Orthanc-worktrees/<branch-or-ticket>`로 옮긴 뒤 다시 진행한다.
 
 ## Work Instructions
 
