@@ -1800,6 +1800,10 @@ body {
   backdrop-filter: blur(2px);
 }
 
+#folderPickerModal {
+  z-index: 110;
+}
+
 .modal-overlay .modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
