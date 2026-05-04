@@ -1848,12 +1848,24 @@ body {
   max-width: 560px;
 }
 
-.project-setup-modal {
+.modal-overlay .project-setup-modal {
   max-width: 640px;
 }
 
 .project-setup-body {
   padding: 16px;
+  overflow: hidden;
+}
+
+.project-setup-body .settings-page {
+  max-width: none;
+  width: 100%;
+}
+
+.project-setup-body .settings-field,
+.project-setup-body .settings-input-row,
+.project-setup-body .settings-value {
+  min-width: 0;
 }
 
 .project-setup-description {
