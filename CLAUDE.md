@@ -96,24 +96,25 @@ PID 존재 여부로 프로세스 생존 확인.
 코드 수정/추가/삭제를 수반하는 작업에 한해 아래 6단계를 순서대로 따른다.
 단순 질문, 파일 조회, 설명 요청 등에는 적용하지 않는다.
 
-### 1. Worktree Setup (작업 트리 준비)
-
-- 현재 작업 경로가 요청 작업에 적합한 worktree인지 확인
-- 새 worktree가 필요하면 `../Orthanc-worktrees/<branch-or-ticket>` 경로에 생성하고 그 경로에서 작업
-- 이미 적절한 worktree에서 작업 중이면 새 worktree를 만들지 않고 그대로 진행
-- `Orthanc/` 내부에는 worktree를 만들지 않는다
-- 작업 명령 실행 전 `npm run ensure:worktree` 또는 `scripts/ensure-worktree.sh`로 guard 통과 여부를 확인
-
-### 2. Plan (계획 수립)
+### 1. Plan (계획 수립)
 
 - 작업 요청을 분석하고 변경 대상 파일, 영향 범위, 구현 순서를 정리
 - 기존 코드 패턴과 유틸리티를 먼저 파악하여 재사용
 - 계획을 사용자에게 제시하고 승인을 받은 후 다음 단계로 진행
 
-### 3. Plan Review (계획 리뷰)
+### 2. Plan Review (계획 리뷰)
 
 - Plan 완료 후 자동으로 `/plan-review` 스킬을 실행하여 계획을 검증
 - **미통과 시**: 미통과 항목을 수정하여 Plan 단계로 돌아간 뒤 재검증
+
+### 3. Worktree Setup (작업 트리 준비)
+
+- Plan Review 통과 후 실제 파일 수정, 명령 실행, 커밋 등 작업을 시작하기 전에 수행
+- 현재 작업 경로가 요청 작업에 적합한 worktree인지 확인
+- 새 worktree가 필요하면 `../Orthanc-worktrees/<branch-or-ticket>` 경로에 생성하고 그 경로에서 작업
+- 이미 적절한 worktree에서 작업 중이면 새 worktree를 만들지 않고 그대로 진행
+- `Orthanc/` 내부에는 worktree를 만들지 않는다
+- 작업 명령 실행 전 `npm run ensure:worktree` 또는 `scripts/ensure-worktree.sh`로 guard 통과 여부를 확인
 
 ### 4. Act (계획 실행)
 
