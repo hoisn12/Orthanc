@@ -65,7 +65,7 @@ TypeScript ESM을 사용하며 로컬 import는 기존 코드처럼 `.js` 확장
 
 ## Work Instructions
 
-코드 수정/추가/삭제 작업은 `CLAUDE.md`와 동일한 절차를 따른다: Worktree Setup, Plan, Plan Review, Act, Code Review, Risk Review. 계획 범위를 벗어난 변경은 하지 말고, 단계별 진행 상황을 공유한다. High 리스크가 발견되면 완료 전에 사용자에게 보고하고 승인을 받는다.
+코드 수정/추가/삭제 작업은 `CLAUDE.md`와 동일한 절차를 따른다: Plan, Plan Review, Worktree Setup, Act, Code Review, Risk Review. 계획 범위를 벗어난 변경은 하지 말고, 단계별 진행 상황을 공유한다. High 리스크가 발견되면 완료 전에 사용자에게 보고하고 승인을 받는다.
 
 ## Shared Skills
 
